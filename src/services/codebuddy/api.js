@@ -65,6 +65,8 @@ function parseUpstreamError(errorBody) {
 /**
  * 把上游错误映射为面向客户端的 HTTP 状态码
  * - 模型级限流（code 6004 / 11102）映射为 400：客户端应"换模型"而非重试（优先于 status 判断）
+ * - 渠道排队（code 6021）映射为 503：上游容量问题，客户端退避重试有效
+ * - WAF 拦截（code 11128）映射为 503：短时高频触发的封禁，稍等重试
  * - 429 保持原样（限流）
  * - 其余上游错误映射为 502；网络错误 502；其他 500
  * @param {Error} err
@@ -74,6 +76,9 @@ export function upstreamErrorStatus(err) {
     if (err instanceof CodeBuddyApiError) {
         // 先按业务 code 判定：6004/11102 是"模型级"问题，语义上不是可重试的限流
         if (isModelLimitCode(err.code)) return 400;
+        // 6021 / 11128 都不是"这个账号不行了"，而是上游侧暂时拒绝服务。
+        // 用 503 而不是 429：429 会让客户端认为要换凭证/等很久，503 才是"稍后重试"。
+        if (isUpstreamBusyCode(err.code) || isWafBlockCode(err.code)) return 503;
         if (err.status === 429) return 429;
         return 502;
     }
@@ -87,6 +92,37 @@ function isModelLimitCode(code) {
     return code === 6004 || code === '6004' || code === 11102 || code === '11102';
 }
 
+/** 上游推理集群排队打满（渠道级容量事件，不是账号问题） */
+export const UPSTREAM_BUSY_CODE = 6021;
+
+/** 国际版 WAF 拒绝请求（渠道校验失败/被拦截，通常是短时高频触发） */
+export const WAF_BLOCK_CODE = 11128;
+
+/**
+ * 是否为"渠道级排队"业务码
+ *
+ * 6021 / queue.full 表示推理集群排队打满。这一刻换任何账号都会撞同一堵墙——
+ * 它不是账号问题，按限流去冷却账号只会把整池健康号在几秒内全部标成不可用。
+ * @param {number|string|null} code
+ * @returns {boolean}
+ */
+export function isUpstreamBusyCode(code) {
+    return code === UPSTREAM_BUSY_CODE || code === String(UPSTREAM_BUSY_CODE);
+}
+
+/**
+ * 是否为"渠道校验拦截"（WAF）业务码
+ *
+ * 11128 / request illegal：上游判定请求不是官方客户端发出的。实测表现为
+ * 短时间高频请求后开始 100% 拒绝，间隔若干分钟才恢复——期间单发也会被拒。
+ * 与"请求体不合法"不同：同样的请求过几分钟就能成功，所以问题不在请求本身。
+ * @param {number|string|null} code
+ * @returns {boolean}
+ */
+export function isWafBlockCode(code) {
+    return code === WAF_BLOCK_CODE || code === String(WAF_BLOCK_CODE);
+}
+
 /**
  * 生成面向客户端的"网关提示"（作为 error.gateway_hint 的并列补充字段，绝不替换 message）
  * 目的：让客户端能按语义正确反应（换模型 / 重试 / 放弃），而非笼统重试
@@ -98,6 +134,12 @@ export function buildGatewayHint(err, model) {
     if (err instanceof CodeBuddyApiError) {
         if (isModelLimitCode(err.code)) {
             return `模型 ${model || ''} 已达上游用量上限（code ${err.code}），建议改用其他模型而非重试`;
+        }
+        if (isUpstreamBusyCode(err.code)) {
+            return '上游推理集群排队已满（code 6021）。这是渠道容量问题，与账号无关，换账号也不会改善；请稍后重试。本次未冷却任何账号';
+        }
+        if (isWafBlockCode(err.code)) {
+            return '上游判定请求不是官方客户端发出（code 11128），通常是短时间请求过于密集触发的临时拦截。稍等几分钟再试，期间频繁重试会延长封锁；本次未把这归为账号限流';
         }
         if (err.status === 402) {
             return '上游返回 402（余额可能不足），该凭证已进入冷却，后续请求会自动切换到其他凭证';
@@ -320,13 +362,54 @@ async function fetchUpstreamModels(credential) {
 }
 
 /**
- * 模型价格缓存：只存最近一次成功拉取的结果，供 /v3/config 失败时回退展示
+ * 模型价格缓存：按站点分开存，供 /v3/config 失败时回退展示
+ *
+ * 必须按站点分键：国内站和国际站的模型集合、倍率都不一样，
+ * 混用一个缓存会在国际站拉取失败时回退出一堆国内站模型（反之亦然）。
+ * @type {Map<string, Array>}
  */
-let MODEL_PRICING_CACHE = null;
+const MODEL_PRICING_CACHE = new Map();
+
+/**
+ * 判断凭证属于哪个站点（用于模型缓存分键）
+ * @param {Object} credential
+ * @returns {'cn'|'intl'}
+ */
+export function realmKeyOf(credential) {
+    const baseUrl = String(credential?.base_url || '').toLowerCase();
+    const domain = String(credential?.domain || '').toLowerCase();
+    const hay = baseUrl + ' ' + domain;
+    if (hay.includes('codebuddy.ai') || hay.includes('workbuddy.ai')) return 'intl';
+    return 'cn';
+}
+
+/**
+ * 按站点各挑一个代表账号（只读取号，不推进轮换计数）
+ *
+ * 国内站与国际站的模型集合、倍率、积分都是两套独立的体系，
+ * 凡是"要展示两边"的地方都得先按站点分组。面板、控制台价格表、
+ * 控制台余额共用这一个函数，避免三处各写一份判断逻辑。
+ *
+ * @param {Array<{data: Object}>} entries - TenantTokenManager.credentials
+ * @returns {Array<{realm: 'cn'|'intl', credential: Object}>} 国内站在前
+ */
+export function pickCredentialPerRealm(entries = []) {
+    const byRealm = new Map();
+    for (const entry of entries) {
+        const data = entry?.data;
+        if (!data || !data.bearer_token) continue;
+        const realm = realmKeyOf(data);
+        if (!byRealm.has(realm)) byRealm.set(realm, data);
+    }
+    const order = {cn: 0, intl: 1};
+    return Array.from(byRealm.entries())
+        .map(([realm, credential]) => ({realm, credential}))
+        .sort((a, b) => (order[a.realm] ?? 9) - (order[b.realm] ?? 9));
+}
 
 /**
  * 获取实时模型计费信息（含 credits 倍率、上下文窗口、能力标签）
- * 直接请求上游 /v3/config，成功时更新缓存；失败时回退到最近一次成功结果
+ * 直接请求上游 /v3/config，成功时更新缓存；失败时回退到该站点最近一次成功结果
  * @param {Object} credential
  * @returns {Promise<Array<{id, name, vendor, credits, creditsValue, maxInputTokens, maxOutputTokens, supportsToolCall, supportsImages, supportsReasoning}>>}
  * 返回的数组在失败回退时会挂载 _fromCache=true 标记
@@ -336,15 +419,17 @@ export async function getModelPricing(credential = null) {
         throw new Error('No valid CodeBuddy credentials available');
     }
 
+    const cacheKey = realmKeyOf(credential);
     let models;
     try {
         models = await fetchUpstreamRawModels(credential);
     } catch (err) {
-        // 拉取失败：回退到最近一次成功结果
-        if (MODEL_PRICING_CACHE) {
-            const cached = MODEL_PRICING_CACHE.map((m) => ({...m}));
-            cached._fromCache = true;
-            return cached;
+        // 拉取失败：回退到该站点最近一次成功结果（不能跨站点回退）
+        const cached = MODEL_PRICING_CACHE.get(cacheKey);
+        if (cached) {
+            const copy = cached.map((m) => ({...m}));
+            copy._fromCache = true;
+            return copy;
         }
         throw err;
     }
@@ -370,9 +455,10 @@ export async function getModelPricing(credential = null) {
             supportsReasoning: m.supportsReasoning === true || m.onlyReasoning === true
         }));
 
-    // 更新缓存（只存最近一次成功结果）
-    MODEL_PRICING_CACHE = result.map((m) => ({...m}));
-    return result;
+    // 更新该站点的缓存（只存最近一次成功结果）
+    MODEL_PRICING_CACHE.set(cacheKey, result.map((m) => ({...m})));
+    // 顺带把站点标在结果上，前端据此分组
+    return result.map((m) => ({...m, realm: cacheKey}));
 }
 
 /**

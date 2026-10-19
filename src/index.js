@@ -14,7 +14,8 @@ import {copilotStore} from './services/copilot/copilot-store.js';
 import {credentialStore} from './services/codebuddy/credential-store.js';
 import {checkinOnStartup, queryCredits, getStartupCheckinConfig, recordScheduleRun} from './services/codebuddy/billing.js';
 import {runGrowthDaily, getGrowthCredentials} from './services/codebuddy/growth.js';
-import {getModelPricing} from './services/codebuddy/api.js';
+import {getModelPricing, pickCredentialPerRealm as pickRealmCredentials} from './services/codebuddy/api.js';
+import {VENDOR_META, VENDOR_ORDER} from './services/codebuddy/config.js';
 import {relayStore} from './services/relay/relay-store.js';
 import {initGatewayAuth, isAdminAuthEnabled, isGatewayAuthEnabled} from './services/gateway/auth.js';
 import {shutdown as shutdownCopilotWSPool} from './services/copilot/copilot-ws-pool.js';
@@ -139,67 +140,92 @@ function formatCredits(creditsValue) {
 }
 
 /**
+ * 按站点挑一个代表账号（只读取号，不推进轮换计数）
+ * 国内站与国际站的模型集合和倍率都不同，价格表必须分开查
+ * @returns {Array<{realm: string, credential: Object}>}
+ */
+function pickCredentialPerRealm() {
+    return pickRealmCredentials(credentialStore.getTokenManager().credentials);
+}
+
+/**
  * 打印实时模型价格表到控制台
  * 直接请求上游 /v3/config，不读缓存，确保展示最新计费倍率
+ *
+ * 国内站与国际站分开输出：两边的模型集合和倍率都不一样（同名模型价格可能不同），
+ * 混在一张表里没法判断该按哪个算。
  */
 async function printPriceTable() {
-    const credential = credentialStore.peekCredential();
-    if (!credential) {
+    const targets = pickCredentialPerRealm();
+    if (targets.length === 0) {
         console.log('⚠ 没有可用的 CodeBuddy 凭证，无法查询价格。请先在 /codebuddyFE 添加凭证。');
         return;
     }
 
     console.log('\n正在拉取上游实时价格表...');
-    try {
-        const pricing = await getModelPricing(credential);
-        if (!pricing || pricing.length === 0) {
-            console.log('⚠ 未获取到模型价格数据。');
-            return;
-        }
 
-        // 按厂商分组后按倍率升序展示
-        const byVendor = new Map();
-        for (const m of pricing) {
-            if (!byVendor.has(m.vendor)) byVendor.set(m.vendor, []);
-            byVendor.get(m.vendor).push(m);
-        }
-        for (const list of byVendor.values()) {
-            list.sort((a, b) => (a.creditsValue ?? Infinity) - (b.creditsValue ?? Infinity));
-        }
+    const realmMeta = {
+        cn: {label: '国内站', host: 'copilot.tencent.com'},
+        intl: {label: '国际站', host: 'www.codebuddy.ai'}
+    };
 
-        const vendorNames = {deepseek: 'DeepSeek', zhipu: '智谱 GLM', moonshot: 'Kimi', minimax: 'MiniMax', hunyuan: '腾讯混元', others: '其他'};
-        const cacheHint = pricing._fromCache ? '（上游拉取失败，显示最近一次结果）' : '';
-        console.log(`\n========== CodeBuddy 实时模型价格表${cacheHint} ==========`);
-        console.log('倍率 = 腾讯 credits 相对计价（x 越大烧钱越快），非人民币');
-        console.log('');
-
-        for (const [vendor, list] of byVendor) {
-            console.log(`【${vendorNames[vendor] || vendor}】`);
-            for (const m of list) {
-                const credits = formatCredits(m.creditsValue);
-                const ctxIn = m.maxInputTokens ? `${(m.maxInputTokens / 10000).toFixed(1)}万` : '-';
-                const ctxOut = m.maxOutputTokens ? `${(m.maxOutputTokens / 10000).toFixed(1)}万` : '-';
-                console.log(
-                    `  ${m.id.padEnd(24)} ${credits.padEnd(7)} 输入 ${ctxIn.padStart(7)}  输出 ${ctxOut.padStart(7)}`
-                );
+    for (const {realm, credential} of targets) {
+        const meta = realmMeta[realm] || {label: realm, host: ''};
+        try {
+            const pricing = await getModelPricing(credential);
+            if (!pricing || pricing.length === 0) {
+                console.log(`\n⚠ ${meta.label}未获取到模型价格数据。`);
+                continue;
             }
+
+            // 按厂商分组后按倍率升序展示
+            const byVendor = new Map();
+            for (const m of pricing) {
+                if (!byVendor.has(m.vendor)) byVendor.set(m.vendor, []);
+                byVendor.get(m.vendor).push(m);
+            }
+            for (const list of byVendor.values()) {
+                list.sort((a, b) => (a.creditsValue ?? Infinity) - (b.creditsValue ?? Infinity));
+            }
+
+            const cacheHint = pricing._fromCache ? '（上游拉取失败，显示最近一次结果）' : '';
+            console.log(`\n========== CodeBuddy 实时模型价格表 · ${meta.label}${cacheHint} ==========`);
+            console.log(`${meta.host} · 共 ${pricing.length} 个模型`);
+            console.log('倍率 = 腾讯 credits 相对计价（x 越大烧钱越快），非人民币');
             console.log('');
+
+            // 按 VENDOR_ORDER 固定顺序输出（面板用的是同一张表）
+            for (const vendor of VENDOR_ORDER) {
+                const list = byVendor.get(vendor);
+                if (!list || list.length === 0) continue;
+                console.log(`【${VENDOR_META[vendor]?.label || vendor}】`);
+                for (const m of list) {
+                    const credits = formatCredits(m.creditsValue);
+                    const ctxIn = m.maxInputTokens ? `${(m.maxInputTokens / 10000).toFixed(1)}万` : '-';
+                    const ctxOut = m.maxOutputTokens ? `${(m.maxOutputTokens / 10000).toFixed(1)}万` : '-';
+                    console.log(
+                        `  ${m.id.padEnd(24)} ${credits.padEnd(7)} 输入 ${ctxIn.padStart(7)}  输出 ${ctxOut.padStart(7)}`
+                    );
+                }
+                console.log('');
+            }
+            console.log('=============================================');
+        } catch (error) {
+            console.log(`\n⚠ ${meta.label}查询价格失败: ${error.message}`);
         }
-        console.log('=============================================\n');
-        console.log('提示：输入p/price/价格 可随时重新查询；输入h/help/帮助 查看指令；输入q/exit/退出 关闭服务。\n');
-    } catch (error) {
-        console.log(`⚠ 查询价格失败: ${error.message}`);
     }
+    console.log('');
+    console.log('提示：输入p/price/价格 可随时重新查询；输入h/help/帮助 查看指令；输入q/exit/退出 关闭服务。\n');
 }
 
 /**
  * 打印今日累计积分消耗量与当前积分余额
- * 今日消耗 = 本地 daily_usage 累计（代理统计）
- * 余额 = 实时查询上游（含分页聚合）
+ * 今日消耗 = 本地 daily_usage 累计（代理统计，不区分站点）
+ * 余额 = 实时查询上游（含分页聚合），国内站与国际站分开列
  */
 async function printBalance() {
-    const credential = credentialStore.peekCredential();
-    if (!credential) {
+    const targets = pickCredentialPerRealm();
+    if (targets.length === 0) {
         console.log('⚠ 没有可用的 CodeBuddy 凭证。请先在 /codebuddyFE 添加凭证。');
         return;
     }
@@ -216,16 +242,25 @@ async function printBalance() {
     console.log(`今日累计消耗: ${todayCredit.toFixed(2)} credits`);
     console.log(`今日 API 调用: ${today.api_calls || 0} 次`);
 
-    // 实时查询当前余额
+    // 实时查询各站点余额。两边的积分是两套独立的账，不能相加。
+    const realmLabel = {cn: '国内站', intl: '国际站'};
     console.log('\n正在查询上游实时积分余额...');
-    try {
-        const summary = await queryCredits(credential);
-        console.log(`当前剩余积分: ${summary.remaining.toFixed(2)} credits`);
-        console.log(`可用总额: ${summary.capacity.toFixed(2)} credits`);
-        console.log(`已消耗(周期): ${summary.used.toFixed(2)} credits`);
-        console.log(`积分包数量: ${summary.packages} 个`);
-    } catch (error) {
-        console.log(`⚠ 查询余额失败: ${error.message}`);
+    for (const {realm, credential} of targets) {
+        const label = realmLabel[realm] || realm;
+        try {
+            const summary = await queryCredits(credential);
+            console.log('');
+            console.log(`【${label}】本月`);
+            console.log(`  剩余可用: ${summary.remaining.toFixed(2)} credits`);
+            console.log(`  累计领取: ${summary.capacity.toFixed(2)} credits`);
+            console.log(`  已花费:   ${summary.used.toFixed(2)} credits`);
+            if (summary.soonestExpiry) {
+                const d = summary.soonestExpiry.daysLeft;
+                console.log(`  最近作废: ${Math.floor(d)} 天后（那一包还剩 ${summary.soonestExpiry.remain.toFixed(2)}）`);
+            }
+        } catch (error) {
+            console.log(`\n【${label}】⚠ 查询失败: ${error.message}`);
+        }
     }
     console.log('=========================================\n');
 }
@@ -237,8 +272,8 @@ function printHelp() {
     const host = getDisplayHost();
     const base = `http://${host}:${PORT}`;
     console.log('\n========== 控制台指令 ==========');
-    console.log('  p/price/价格    查询上游实时模型价格表');
-    console.log('  b/balance/余额  查看今日积分消耗与当前余额');
+    console.log('  p/price/价格    查询上游实时模型价格表（国内站/国际站分开列）');
+    console.log('  b/balance/余额  查看今日积分消耗与当前余额（按站点分列）');
     console.log('  h/help/帮助     显示本帮助');
     console.log('  q/exit/退出     关闭代理服务');
     console.log('');

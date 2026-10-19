@@ -186,6 +186,163 @@
                 border-radius: 10px;
                 margin-left: 6px;
             }
+            /* 拖动排序：手柄独立成一块，不与「置顶/禁用」等按钮抢点击区域。
+               inline-block 是必须的：inline 元素的拖拽热区只有字形本身，很难按住。 */
+            .drag-handle {
+                cursor: grab;
+                color: #9ca3af;
+                font-size: 1.15rem;
+                line-height: 1;
+                padding: 8px 6px;
+                user-select: none;
+                -webkit-user-select: none;
+                display: inline-block;
+                flex: 0 0 auto;
+                border-radius: 4px;
+                transition: background 0.15s, color 0.15s;
+            }
+            .drag-handle:hover {
+                background: #e5e7eb;
+                color: #4b5563;
+            }
+            .drag-handle:active { cursor: grabbing; }
+            .credential-item.dragging { opacity: 0.45; }
+            .credential-item.drop-above { box-shadow: 0 -3px 0 #667eea; }
+            .credential-item.drop-below { box-shadow: 0 3px 0 #667eea; }
+            /* 优先级序号：一眼看出谁排第几 */
+            .priority-rank {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                background: #e5e7eb;
+                color: #4b5563;
+                font-size: 0.7rem;
+                font-weight: 600;
+                margin-right: 8px;
+                vertical-align: middle;
+            }
+            .priority-rank.top { background: #667eea; color: #fff; }
+            /* 额度进度条：按剩余比例收窄，低于阈值换色 */
+            .quota-bar {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-top: 6px;
+            }
+            .quota-track {
+                flex: 1;
+                height: 8px;
+                background: #e5e7eb;
+                border-radius: 4px;
+                overflow: hidden;
+                min-width: 80px;
+            }
+            .quota-fill {
+                height: 100%;
+                border-radius: 4px;
+                transition: width 0.3s ease;
+            }
+            .quota-pct {
+                font-size: 0.75rem;
+                color: #6b7280;
+                min-width: 58px;
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            /* 额度总览：四张指标卡并排，窄屏自动折行 */
+            .quota-overview {
+                padding: 14px 16px;
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                margin-bottom: 14px;
+            }
+            .metric-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                gap: 12px;
+            }
+            .metric-card {
+                background: #fff;
+                border: 1px solid #e5e7eb;
+                border-radius: 6px;
+                padding: 10px 12px;
+            }
+            .metric-value {
+                font-size: 1.15rem;
+                font-weight: 700;
+                color: #1f2937;
+                font-variant-numeric: tabular-nums;
+                line-height: 1.2;
+            }
+            .metric-label {
+                font-size: 0.72rem;
+                color: #6b7280;
+                margin-top: 2px;
+            }
+            .metric-hint {
+                font-size: 0.68rem;
+                color: #9ca3af;
+                margin-top: 3px;
+                line-height: 1.3;
+            }
+            /* 站点分组标题：国内站/国际站的积分是两套账，各自成块，不跨站合计 */
+            .realm-head {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .realm-head strong {
+                font-size: 0.9rem;
+                color: #1f2937;
+            }
+            .realm-head span {
+                font-size: 0.72rem;
+                color: #9ca3af;
+            }
+            .badge-realm {
+                background: #e5e7eb;
+                color: #4b5563;
+                font-size: 0.7rem;
+                padding: 2px 8px;
+                border-radius: 10px;
+            }
+            /* 模型列表按站点分块：两边的模型集合与倍率都不一样，不能混成一张表 */
+            .model-realm {
+                padding: 12px 14px;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                background: #fafbfc;
+                margin-bottom: 12px;
+            }
+            .model-realm:last-child {
+                margin-bottom: 0;
+            }
+            /* 到期倒计时：3 天内红、7 天内黄 */
+            .badge-expiry {
+                background: #e5e7eb;
+                color: #4b5563;
+                font-size: 0.68rem;
+                padding: 2px 8px;
+                border-radius: 10px;
+                margin-left: 6px;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+            .badge-expiry.warn {
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .badge-expiry.urgent {
+                background: #fee2e2;
+                color: #991b1b;
+            }
             .credential-info h4 {
                 color: #1f2937;
                 margin-bottom: 2px;
@@ -936,6 +1093,11 @@
                               '），重置会同步到全部实例</span>'
                             : ''
                     }</h2>
+                    <p style="font-size:0.8rem;color:#6b7280;margin:-6px 0 12px;">
+                        按住 ⠿ 拖动可调整优先级，或用「置顶」把某个号挪到第一位。排在上面的号优先接单，冷却/禁用/过期时自动顺延到下一个。
+                        没拖动过则按原来的轮转方式分配。
+                        <button class="btn btn-secondary btn-small" style="margin-left:8px;" onclick="clearPriorityOrder()">恢复自动轮转</button>
+                    </p>
                     <div id="credentialsList">
                         <div class="empty-state"><p>加载中...</p></div>
                     </div>
@@ -1248,12 +1410,18 @@
                                     }
                                 }
                                 statusParts.push('上游: ' + shortUrl);
+                                // 「活跃」= 下一个请求实际会用的号。
+                                // 优先级模式下就是队首（priorityRank 0）且当前可用；
+                                // 没排过序时退回手动选择/轮转视角。
+                                const isTop = cred.priorityRank === 0;
                                 const isActive =
                                     !cred.isDomainBlocked &&
                                     !cred.isDisabled &&
                                     !cred.isExpired &&
                                     !cred.isRateLimited &&
-                                    cred.index === manualSelectedIndex;
+                                    (cred.priorityRank >= 0
+                                        ? isTop
+                                        : cred.index === manualSelectedIndex);
                                 let itemClass = cred.isDomainBlocked
                                     ? 'domain-blocked'
                                     : cred.isDisabled
@@ -1270,19 +1438,15 @@
                                         : '<button class="btn btn-warning btn-small" onclick="toggleCredentialDisable(' +
                                           cred.index +
                                           ')">禁用</button>';
-                                let activeBtn = '';
-                                if (
-                                    !cred.isDomainBlocked &&
-                                    !cred.isDisabled &&
-                                    !cred.isExpired &&
-                                    !cred.isRateLimited &&
-                                    !isActive
-                                ) {
-                                    activeBtn =
-                                        '<button class="btn btn-primary btn-small" onclick="setActiveCredential(' +
-                                        cred.index +
-                                        ')">设为活跃</button>';
-                                }
+                                // 「置顶」= 把这一行挪到优先级队列第一位，与拖动排序同一个机制。
+                                // 不再用只影响单个号的 manualSelectedIndex：那套会顺带清空全池冷却，
+                                // 语义又和拖动排序重复，用户根本分不清两者差别。
+                                const topBtn =
+                                    !cred.isDomainBlocked && !cred.isDisabled && cred.priorityRank !== 0
+                                        ? '<button class="btn btn-primary btn-small" onclick="moveCredentialToTop(' +
+                                          cred.index +
+                                          ')">置顶</button>'
+                                        : '';
                                 // 重置状态：清冷却 + 解除禁用（合并为一个按钮）
                                 const resetBtn =
                                     !cred.isDomainBlocked && (cred.isRateLimited || cred.isDisabled)
@@ -1316,13 +1480,18 @@
                                               .join('')
                                         : '';
                                 return `
-                        <li class="credential-item ${itemClass}">
-                            <div class="credential-info">
-                                <h4>${cred.email || cred.userId}${activeTag}${rateLimitTag}${modelLockTag}</h4>
-                                <p>${statusParts.join(' | ')}</p>
+                        <li class="credential-item ${itemClass}"
+                            data-filename="${(cred.filename || '').replace(/"/g, '&quot;')}"
+                            data-index="${cred.index}">
+                            <div style="display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;">
+                                <span class="drag-handle" draggable="true" title="按住拖动调整优先级">⠿</span>
+                                <div class="credential-info" style="flex:1;min-width:0;">
+                                    <h4>${cred.priorityRank >= 0 ? '<span class="priority-rank' + (cred.priorityRank === 0 ? ' top' : '') + '">' + (cred.priorityRank + 1) + '</span>' : ''}${cred.email || cred.userId}${activeTag}${rateLimitTag}${modelLockTag}</h4>
+                                    <p>${statusParts.join(' | ')}</p>
+                                </div>
                             </div>
                             <div style="display: flex; gap: 6px;">
-                                ${activeBtn}
+                                ${topBtn}
                                 ${resetBtn}
                                 ${toggleBtn}
                                 <button class="btn btn-danger btn-small" onclick="deleteCredential(${cred.index})">删除</button>
@@ -1332,8 +1501,134 @@
                             })
                             .join('') +
                         '</ul>';
+
+                    bindCredentialDragSort(list);
                 } catch (error) {
                     showToast('加载凭证失败: ' + error.message, 'error');
+                }
+            }
+
+            /**
+             * 拖动排序（原生 HTML5 DnD，事件委托挂在列表容器上）
+             *
+             * 只有 ⠿ 手柄带 draggable：行本身不能拖，否则选中文字、点按钮都会误触发。
+             * dragstart 的 target 就是被标 draggable 的元素，也就是手柄本身，
+             * 所以手柄直接找父级 li，不需要再判断 target 是不是手柄。
+             *
+             * 排序结果按文件名提交，不按下标：下标会随增删平移，用户排好的顺序会整片错位。
+             * 提交成功后本地立刻按新顺序重排 DOM，不等下一次轮询，避免"松手后跳回去"。
+             */
+            let dragFilename = null;
+
+            function bindCredentialDragSort(container) {
+                const listEl = container.querySelector('.credential-list');
+                if (!listEl) return;
+
+                const clearMarks = () => {
+                    listEl
+                        .querySelectorAll('.drop-above, .drop-below')
+                        .forEach((el) => el.classList.remove('drop-above', 'drop-below'));
+                };
+
+                listEl.addEventListener('dragstart', (ev) => {
+                    const item = ev.target.closest('.credential-item');
+                    if (!item) {
+                        ev.preventDefault();
+                        return;
+                    }
+                    dragFilename = item.dataset.filename;
+                    item.classList.add('dragging');
+                    ev.dataTransfer.effectAllowed = 'move';
+                    // Firefox 要求必须 setData 才会真正开始拖动
+                    ev.dataTransfer.setData('text/plain', dragFilename);
+                });
+
+                listEl.addEventListener('dragover', (ev) => {
+                    if (!dragFilename) return;
+                    ev.preventDefault();
+                    ev.dataTransfer.dropEffect = 'move';
+                    const item = ev.target.closest('.credential-item');
+                    clearMarks();
+                    if (!item || item.dataset.filename === dragFilename) return;
+                    // 落到目标行的上半还是下半，决定插到它前面还是后面
+                    const rect = item.getBoundingClientRect();
+                    item.classList.add(ev.clientY < rect.top + rect.height / 2 ? 'drop-above' : 'drop-below');
+                });
+
+                listEl.addEventListener('drop', (ev) => {
+                    if (!dragFilename) return;
+                    ev.preventDefault();
+                    const target = ev.target.closest('.credential-item');
+                    if (!target || target.dataset.filename === dragFilename) {
+                        clearMarks();
+                        return;
+                    }
+                    const rect = target.getBoundingClientRect();
+                    const insertBefore = ev.clientY < rect.top + rect.height / 2;
+
+                    // 先算出新顺序再改 DOM：以当前渲染顺序为基准，把拖动项摘出来插到目标位置
+                    const keys = Array.from(listEl.children).map((el) => el.dataset.filename);
+                    const from = keys.indexOf(dragFilename);
+                    if (from < 0) {
+                        clearMarks();
+                        return;
+                    }
+                    keys.splice(from, 1);
+                    let to = keys.indexOf(target.dataset.filename);
+                    if (to < 0) to = keys.length;
+                    keys.splice(insertBefore ? to : to + 1, 0, dragFilename);
+
+                    // 本地先重排，让松手瞬间顺序就定下来
+                    const byKey = new Map(
+                        Array.from(listEl.children).map((el) => [el.dataset.filename, el])
+                    );
+                    keys.forEach((k) => byKey.get(k) && listEl.appendChild(byKey.get(k)));
+                    clearMarks();
+
+                    savePriorityOrder(keys);
+                });
+
+                listEl.addEventListener('dragend', () => {
+                    dragFilename = null;
+                    clearMarks();
+                    listEl.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+                });
+            }
+
+            async function savePriorityOrder(order) {
+                try {
+                    const response = await fetch(API_BASE + '/credentials/reorder', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({order})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message || '优先级已保存');
+                        // 重新拉一次拿到 priorityRank，序号徽章才会跟着变
+                        loadCredentials();
+                    } else {
+                        showToast(data.error || '保存失败', 'error');
+                        loadCredentials();
+                    }
+                } catch (error) {
+                    showToast('保存失败: ' + error.message, 'error');
+                    loadCredentials();
+                }
+            }
+
+            async function clearPriorityOrder() {
+                try {
+                    const response = await fetch(API_BASE + '/credentials/priority-clear', {method: 'POST'});
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message || '已恢复自动轮转');
+                        loadCredentials();
+                    } else {
+                        showToast(data.error || '操作失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('操作失败: ' + error.message, 'error');
                 }
             }
 
@@ -1454,29 +1749,179 @@
                 }
             }
 
+            /**
+             * 额度进度条：按「已消耗 / 总额度」画利用率。
+             *
+             * 画已用而不是剩余，是为了和上游账单口径一致：总量、已用、剩余三个数
+             * 天然闭环（总量 = 已用 + 剩余），条子走到底就是"额度花完了"。
+             * 容量未知（null）时不画条，避免把"没查到"画成"用光了"。
+             */
+            function quotaBarHtml(used, capacity) {
+                if (used == null || capacity == null || capacity <= 0) {
+                    return '<span style="color:#9ca3af;font-size:0.75rem;">额度待查询</span>';
+                }
+                const ratio = Math.max(0, Math.min(1, used / capacity));
+                const pct = (ratio * 100).toFixed(1);
+                const color = ratio >= 0.9 ? '#ef4444' : ratio >= 0.7 ? '#f59e0b' : '#10b981';
+                return (
+                    '<div class="quota-bar">' +
+                    '<div class="quota-track"><div class="quota-fill" style="width:' +
+                    pct +
+                    '%;background:' +
+                    color +
+                    ';"></div></div>' +
+                    '<span class="quota-pct">已用 ' + pct + '%</span>' +
+                    '</div>'
+                );
+            }
+
+            /**
+             * 到期倒计时徽章。这是额度里最该看的信息：积分不用会作废。
+             * 3 天内标红，7 天内标黄，一年以上视为长期有效。
+             */
+            function expiryBadgeHtml(expiry) {
+                if (!expiry || expiry.daysLeft == null) return '';
+                const d = Number(expiry.daysLeft);
+                let cls = 'badge-expiry';
+                let text;
+                if (d <= 3) {
+                    cls += ' urgent';
+                    text = '剩 ' + d.toFixed(1) + ' 天（即将作废）';
+                } else if (d <= 7) {
+                    cls += ' warn';
+                    text = '剩 ' + Math.ceil(d) + ' 天';
+                } else if (d < 365) {
+                    text = '剩 ' + Math.floor(d) + ' 天';
+                } else {
+                    return '<span class="badge-expiry">长期有效</span>';
+                }
+                const title = '最近到期：' + (expiry.name || '') + '（剩余 ' +
+                    Number(expiry.remain || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}) + '）';
+                return '<span class="' + cls + '" title="' + title + '">' + text + '</span>';
+            }
+
+            /**
+             * 一张指标卡：数字 + 名称 + 一句人话解释
+             *
+             * 只写「总额度容量」这种词没人看得懂。三个数字是一笔账：
+             * 一共领到多少、花掉多少、还剩多少，每张卡下面都把这句账写明。
+             */
+            function metricCard(label, value, color, hint) {
+                return (
+                    '<div class="metric-card">' +
+                    '<div class="metric-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' +
+                    '<div class="metric-label">' + label + '</div>' +
+                    (hint ? '<div class="metric-hint">' + hint + '</div>' : '') +
+                    '</div>'
+                );
+            }
+
             function renderBilling(accounts) {
                 const list = document.getElementById('billingList');
                 if (!accounts || accounts.length === 0) {
                     list.innerHTML = '<div class="empty-state"><p>暂无国内站凭证</p></div>';
                     return;
                 }
+
+                // 按站点分组统计。
+                //
+                // 国内站和国际站的积分是两套独立的账：国内积分跑不了国际站的模型，
+                // 反过来也一样。把两边相加得到的数字没有对应的现实含义——它不是
+                // "还能花多少"，也不是"这个月领了多少"，只是一个无意义的和。
+                // 所以每个站点各自一套指标，不跨站合计。
+                const REALMS = [
+                    {key: 'cn', label: '国内站', host: 'copilot.tencent.com'},
+                    {key: 'intl', label: '国际站', host: 'www.codebuddy.ai'}
+                ];
+                const known = accounts.filter((a) => a.remaining != null && a.capacity != null);
+                const missing = accounts.length - known.length;
+                const fmt = (n) => Number(n).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+
+                /** 某一站点的总览块；该站点没有账号时返回空串 */
+                const realmOverview = (realm) => {
+                    const group = known.filter((a) => (a.realm || 'cn') === realm.key);
+                    if (group.length === 0) return '';
+                    const sum = (key) => group.reduce((s, a) => s + Number(a[key] || 0), 0);
+                    const totalRemaining = sum('remaining');
+                    const totalCapacity = sum('capacity');
+                    const totalUsed = sum('used');
+
+                    let soonest = null;
+                    for (const a of group) {
+                        if (a.soonestExpiry && (!soonest || a.soonestExpiry.at < soonest.at)) {
+                            soonest = a.soonestExpiry;
+                        }
+                    }
+
+                    return (
+                        '<div class="quota-overview">' +
+                        '<div class="realm-head">' +
+                        '<strong>' + realm.label + '</strong>' +
+                        '<span>' + realm.host + ' · ' + group.length + ' 个账号</span>' +
+                        '</div>' +
+                        '<div class="metric-grid">' +
+                        metricCard('本月剩余可用积分', fmt(totalRemaining), '#10b981', '这个站现在能花的部分') +
+                        metricCard('本月已花费', fmt(totalUsed), '#6b7280', '本月领取的积分里用掉的') +
+                        metricCard('本月累计领取总额度', fmt(totalCapacity), '#1f2937', '本月所有积分包的面额之和') +
+                        metricCard(
+                            '最近一次作废',
+                            soonest ? Math.floor(soonest.daysLeft) + ' 天后' : '—',
+                            '#f59e0b',
+                            soonest ? '届时未用完的会清零' : '没有即将到期的包'
+                        ) +
+                        '</div>' +
+                        quotaBarHtml(totalUsed, totalCapacity) +
+                        '<div style="font-size:0.75rem;color:#6b7280;margin-top:8px;">' +
+                        (soonest
+                            ? '最早的一批 ' + expiryBadgeHtml(soonest) + ' 到期，那一包里还有 ' + fmt(soonest.remain) + ' 分'
+                            : '当前没有即将到期的包') +
+                        '</div>' +
+                        '</div>'
+                    );
+                };
+
+                const overview =
+                    known.length === 0
+                        ? ''
+                        : REALMS.map(realmOverview).join('') +
+                          (missing > 0
+                              ? '<div style="font-size:0.75rem;color:#6b7280;margin-bottom:10px;">另有 ' +
+                                missing + ' 个账号查询失败，未计入</div>'
+                              : '');
+
                 list.innerHTML =
+                    overview +
                     '<ul class="credential-list">' +
+                    // 按站点排序，同站账号挨在一起，跟上面的分组总览对得上
                     accounts
+                        .slice()
+                        .sort((a, b) => String(a.realm || 'cn').localeCompare(String(b.realm || 'cn')))
                         .map((a) => {
                             const remaining = a.remaining === null || a.remaining === undefined
                                 ? '<span style="color:#9ca3af;">待查询</span>'
                                 : '<strong>' + Number(a.remaining).toLocaleString('zh-CN', {maximumFractionDigits: 2}) + '</strong>';
                             const staleTag = a.stale ? ' <span style="color:#f59e0b;font-size:0.7rem;">(待刷新)</span>' : '';
-                            const checkinTag = a.checkedToday
-                                ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;">已签到</span>'
-                                : '<button class="btn btn-secondary btn-small" onclick="singleCheckin(\'' + (a.userId || '').replace(/'/g, "\\'") + '\')">签到</button>';
+                            // 签到只有国内个人站有；国际站显示站点标签代替签到按钮
+                            const checkinTag = !a.supportsCheckin
+                                ? '<span class="badge-realm">国际站</span>'
+                                : a.checkedToday
+                                  ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;">已签到</span>'
+                                  : '<button class="btn btn-secondary btn-small" onclick="singleCheckin(\'' + (a.userId || '').replace(/'/g, "\\'") + '\')">签到</button>';
                             const errorLine = a.error ? '<p style="color:#ef4444;font-size:0.8rem;">' + a.error + '</p>' : '';
+                            // 三个数字统一用「本月」口径，和上方指标卡一致
+                            const numbers =
+                                a.capacity == null
+                                    ? '本月还剩 ' + remaining + ' 积分'
+                                    : '本月还剩 ' + remaining +
+                                      ' 积分  ·  已花 ' + Number(a.used || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
+                                      ' 积分  ·  本月累计领取 ' + Number(a.capacity).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
+                                      ' 积分';
                             return `
                         <li class="credential-item">
                             <div class="credential-info">
-                                <h4>${a.email || a.userId} ${checkinTag}</h4>
-                                <p>剩余积分: ${remaining}${staleTag} | 总容量: ${a.capacity ?? '—'} | 包数: ${a.packages ?? '—'}</p>
+                                <h4>${a.email || a.userId} ${checkinTag}${expiryBadgeHtml(a.soonestExpiry)}</h4>
+                                <p>${numbers}${staleTag}</p>
+                                ${quotaBarHtml(a.used, a.capacity)}
                                 ${errorLine}
                             </div>
                         </li>
@@ -1511,7 +1956,10 @@
                     const response = await fetch('/codebuddyFE/billing/status');
                     const data = await response.json();
                     if (!response.ok) throw new Error(data.error || '查询失败');
-                    const unchecked = (data.accounts || []).filter((a) => !a.checkedToday && !a.error);
+                    // 国际站没有签到活动，别把它算进"待签到"
+                    const unchecked = (data.accounts || []).filter(
+                        (a) => a.supportsCheckin && !a.checkedToday && !a.error
+                    );
                     if (unchecked.length === 0) {
                         showToast('所有账号今日均已签到');
                         return;
@@ -1690,49 +2138,85 @@
                     const response = await fetch('/codebuddyFE/models');
                     const data = await response.json();
                     if (!response.ok) throw new Error(data.error || '查询失败');
-                    renderModels(data.models || [], data.fromCache === true);
+                    renderModels(data);
                 } catch (error) {
                     container.innerHTML = '<div class="empty-state"><p>加载失败: ' + error.message + '</p></div>';
                 }
             }
 
-            function renderModels(models, fromCache) {
+            /**
+             * 渲染模型列表，按站点分块。
+             *
+             * 国内站和国际站的模型集合与倍率都不一样，混在一张表里会让人以为
+             * 同一个模型名两边价格相同。每个站点单独一块，倍率各看各的。
+             */
+            function renderModels(data) {
                 const container = document.getElementById('modelsContainer');
-                if (!models || models.length === 0) {
+                const realms = Array.isArray(data.realms) ? data.realms : null;
+                // 兼容旧接口形态（没有 realms 时按单站点处理）
+                const groups = realms || [{realm: 'cn', models: data.models || [], fromCache: data.fromCache === true}];
+
+                const nonEmpty = groups.filter((g) => (g.models || []).length > 0);
+                if (nonEmpty.length === 0) {
                     container.innerHTML = '<div class="empty-state"><p>暂无可用模型（请确认已添加有效凭证）</p></div>';
                     return;
                 }
-                let html = '';
-                if (fromCache) {
-                    html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#f59e0b;">上游拉取失败，显示最近一次结果</p></div>';
-                }
-                // 按厂商分组
-                const vendorNames = {deepseek: 'DeepSeek', hunyuan: '腾讯混元', others: '其他', zhipu: '智谱 GLM', moonshot: 'Kimi', minimax: 'MiniMax'};
-                // 固定厂商展示顺序
-                const vendorOrder = ['deepseek', 'hunyuan', 'others', 'zhipu', 'moonshot', 'minimax'];
-                const groups = {};
-                for (const m of models) {
-                    (groups[m.vendor] ||= []).push(m);
-                }
-                // 每组内按倍率升序
-                for (const list of Object.values(groups)) {
-                    list.sort((a, b) => (a.creditsValue ?? Infinity) - (b.creditsValue ?? Infinity));
-                }
+
+                const REALM_META = {
+                    cn: {label: '国内站', host: 'copilot.tencent.com'},
+                    intl: {label: '国际站', host: 'www.codebuddy.ai'}
+                };
+                // 厂商名称与顺序由后端 VENDOR_META 统一给出（见 config.js），
+                // 这里不再各自维护一份，避免面板和控制台两处名字/顺序不一致。
+                // 兜底：后端没给时用内置表，保证旧接口形态也能正常渲染。
+                const vendorNames = Object.keys(data.vendorLabels || {}).length
+                    ? data.vendorLabels
+                    : {deepseek: 'DeepSeek', gpt: 'GPT', gemini: 'Gemini', hunyuan: '腾讯混元', zhipu: '智谱 GLM', moonshot: 'Kimi', minimax: 'MiniMax', others: '其他'};
+                const vendorOrder = Array.isArray(data.vendorOrder) && data.vendorOrder.length
+                    ? data.vendorOrder
+                    : ['deepseek', 'gpt', 'gemini', 'hunyuan', 'zhipu', 'moonshot', 'minimax', 'others'];
                 const fmtRate = (v) => v === null || v === undefined ? '—' : (v === 0 ? '免费' : 'x' + v);
-                for (const vendor of vendorOrder) {
-                    const list = groups[vendor];
-                    if (!list || list.length === 0) continue;
-                    const label = vendorNames[vendor] || vendor;
-                    html += '<div class="guide-step-title" style="margin-top: 12px;">' + label + '</div>';
-                    html += '<div class="guide-step-desc"><table class="guide-model-table"><thead><tr><th>模型</th><th>说明</th><th>倍率</th></tr></thead><tbody>';
-                    for (const m of list) {
-                        html += '<tr>' +
-                            '<td><code>' + m.id + '</code></td>' +
-                            '<td>' + m.name + '</td>' +
-                            '<td>' + fmtRate(m.creditsValue) + '</td>' +
-                            '</tr>';
+
+                let html = '';
+                for (const g of nonEmpty) {
+                    const meta = REALM_META[g.realm] || {label: g.realm, host: ''};
+                    html += '<div class="model-realm">';
+                    html += '<div class="realm-head">' +
+                        '<strong>' + meta.label + '</strong>' +
+                        '<span>' + meta.host + ' · ' + g.models.length + ' 个模型</span>' +
+                        '</div>';
+                    if (g.fromCache) {
+                        html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#f59e0b;">上游拉取失败，显示该站点最近一次结果</p></div>';
                     }
-                    html += '</tbody></table></div>';
+                    if (g.error) {
+                        html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#ef4444;">' + g.error + '</p></div>';
+                    }
+
+                    // 按厂商分组
+                    const vendorGroups = {};
+                    for (const m of g.models) {
+                        (vendorGroups[m.vendor] ||= []).push(m);
+                    }
+                    // 每组内按倍率升序
+                    for (const list of Object.values(vendorGroups)) {
+                        list.sort((a, b) => (a.creditsValue ?? Infinity) - (b.creditsValue ?? Infinity));
+                    }
+                    for (const vendor of vendorOrder) {
+                        const list = vendorGroups[vendor];
+                        if (!list || list.length === 0) continue;
+                        const label = vendorNames[vendor] || vendor;
+                        html += '<div class="guide-step-title" style="margin-top: 12px;">' + label + '</div>';
+                        html += '<div class="guide-step-desc"><table class="guide-model-table"><thead><tr><th>模型</th><th>说明</th><th>倍率</th></tr></thead><tbody>';
+                        for (const m of list) {
+                            html += '<tr>' +
+                                '<td><code>' + m.id + '</code></td>' +
+                                '<td>' + m.name + '</td>' +
+                                '<td>' + fmtRate(m.creditsValue) + '</td>' +
+                                '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                    }
+                    html += '</div>';
                 }
                 container.innerHTML = html;
             }
@@ -1794,22 +2278,41 @@
                 }
             }
 
-            async function setActiveCredential(index) {
+            /**
+             * 把某个号挪到优先级队列第一位。
+             *
+             * 走的是和拖动排序完全相同的接口（提交完整文件名顺序），
+             * 所以只有一套优先级来源，不会出现"拖了 A 却还在用 C"。
+             * 也不再顺带清空全池冷却——要清冷却用「重置状态」，那是另一个意图。
+             */
+            async function moveCredentialToTop(index) {
                 try {
-                    const response = await fetch(`/codebuddyFE/credentials/select`, {
+                    // 以当前 DOM 顺序为准（就是后端返回的优先级顺序）
+                    const listEl = document.querySelector('#credentialsList .credential-list');
+                    if (!listEl) return;
+                    const keys = Array.from(listEl.children).map((el) => el.dataset.filename);
+                    const target = listEl.querySelector('[data-index="' + index + '"]');
+                    if (!target) return;
+                    const filename = target.dataset.filename;
+                    const from = keys.indexOf(filename);
+                    if (from <= 0) return; // 已经在第一位
+                    keys.splice(from, 1);
+                    keys.unshift(filename);
+
+                    const response = await fetch(API_BASE + '/credentials/reorder', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({index})
+                        body: JSON.stringify({order: keys})
                     });
+                    const data = await response.json();
                     if (response.ok) {
-                        manualSelectedIndex = index;
-                        showToast('已设为活跃凭证');
+                        showToast('已置顶，下一个请求起优先用它');
                         loadCredentials();
                     } else {
-                        throw new Error('设置失败');
+                        showToast(data.error || '操作失败', 'error');
                     }
                 } catch (error) {
-                    showToast('设置失败: ' + error.message, 'error');
+                    showToast('操作失败: ' + error.message, 'error');
                 }
             }
 

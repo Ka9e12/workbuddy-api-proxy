@@ -55,6 +55,11 @@ class TenantTokenManager {
         this.sessionAffinity = new Map();
         // 选择策略：'rotation'（默认，保留 rotationCount 语义）| 'weighted'（闲置加权随机）
         this.selectionStrategy = options.selectionStrategy || 'rotation';
+
+        // 手动优先级顺序：凭证稳定 key 的有序数组（面板拖动排序产生）
+        // 空数组 = 用户没设置过，保持原有轮转/加权行为。
+        // 非空 = 严格优先级：从上到下取第一个可用号，不轮转。
+        this.priorityOrder = [];
         // 加权选择参数
         this.idleWeightPerHour = options.idleWeightPerHour ?? 0.5;
         this.idleWeightMax = options.idleWeightMax ?? 5.0;
@@ -180,6 +185,101 @@ class TenantTokenManager {
         for (const key of this.softStreaks.keys()) {
             if (key >= this.credentials.length) this.softStreaks.delete(key);
         }
+
+        this._prunePriorityOrder();
+    }
+
+    /**
+     * 凭证的稳定标识：文件名。
+     *
+     * 不能用下标——增删任意一个凭证都会让后面所有下标平移，用户排好的优先级会整片错位。
+     * 同一账号重新认证时 addCredentialWithData 覆写的是同一个文件（文件名不变），
+     * 所以文件名比 user_id 更适合当键（无 user_id 的凭证也有文件名）。 */
+    _credentialKey(index) {
+        const entry = this.credentials[index];
+        return entry ? basename(entry.filePath) : null;
+    }
+
+    /**
+     * 把 priorityOrder 收敛到当前真实存在的凭证，并去重。
+     *
+     * 顺序本身要保留（它就是用户意图），只丢掉已经不存在的条目；
+     * 没进过 priorityOrder 的新凭证按加载顺序追加到末尾，
+     * 这样新加的号不会因为"没排过队"而被永久忽略。
+     */
+    _prunePriorityOrder() {
+        // 空数组 = 用户从未设置过优先级，保持原轮转语义；不能自动填满，
+        // 否则"没设置"会被误判成"严格按文件名优先级"。
+        if (this.priorityOrder.length === 0) return;
+
+        const existing = new Set(
+            this.credentials.map((c) => basename(c.filePath))
+        );
+        const seen = new Set();
+        const kept = [];
+        for (const key of this.priorityOrder) {
+            if (!existing.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            kept.push(key);
+        }
+        for (const key of existing) {
+            if (!seen.has(key)) kept.push(key);
+        }
+        // 全部凭证都排过队时，数组内容与凭证集合等价 —— 这时保留顺序不做任何事，
+        // 让 getNextCredential 走原路径（不是"严格优先级"）。
+        this.priorityOrder = kept;
+    }
+
+    /**
+     * 设置手动优先级顺序（面板拖动排序）
+     * @param {string[]} filenames - 按优先级从高到低排列的凭证文件名
+     * @returns {boolean} 是否成功
+     */
+    setPriorityOrder(filenames) {
+        if (!Array.isArray(filenames)) return false;
+        const existing = new Set(this.credentials.map((c) => basename(c.filePath)));
+        // 只接受已知文件名的子集，顺序照传入的走；其余保持丢弃
+        const accepted = [];
+        const seen = new Set();
+        for (const raw of filenames) {
+            const key = String(raw || '');
+            if (!existing.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            accepted.push(key);
+        }
+        if (accepted.length === 0) return false;
+
+        // 没在列表里出现的凭证追加到末尾，避免"漏掉一个就再也用不上"
+        for (const key of existing) {
+            if (!seen.has(key)) accepted.push(key);
+        }
+
+        this.priorityOrder = accepted;
+        // 排了序就等于重新表达了调度意图，之前点过的「设为活跃」不再适用。
+        // 两者都表达"我想用哪个号"，但优先级更完整（是整池的顺序），保留旧的手动
+        // 指定会让队首形同虚设：用户把 A 拖到第一，实际却还在用之前点过的 C。
+        if (this.manualSelectedIndex !== null) {
+            logger.debug(
+                `Priority order set, clearing manual selection (was #${this.manualSelectedIndex})`
+            );
+            this.manualSelectedIndex = null;
+        }
+        // 顺序变了意味着用户重新表达了意图，旧的绑定关系不再有意义
+        this.clearAffinity();
+        this.saveState();
+        broadcast('codebuddy-state-changed').catch(() => {});
+        logger.debug(`Priority order set: ${accepted.join(' > ')}`);
+        return true;
+    }
+
+    /**
+     * 清空手动优先级，回到轮转
+     */
+    clearPriorityOrder() {
+        this.priorityOrder = [];
+        this.saveState();
+        broadcast('codebuddy-state-changed').catch(() => {});
+        logger.debug('Cleared priority order, resumed rotation');
     }
 
     /**
@@ -217,6 +317,11 @@ class TenantTokenManager {
                     );
                 }
 
+                if (Array.isArray(state.priorityOrder)) {
+                    this.priorityOrder = state.priorityOrder.map(String);
+                    this._prunePriorityOrder();
+                }
+
                 if (this.manualSelectedIndex === null && state.currentIndex !== undefined) {
                     if (state.currentIndex >= 0 && state.currentIndex < this.credentials.length) {
                         this.currentIndex = state.currentIndex;
@@ -241,6 +346,7 @@ class TenantTokenManager {
                 manualSelectedIndex: this.manualSelectedIndex,
                 rotationCount: this.rotationCount,
                 disabledIndexes: this.disabledIndexes,
+                priorityOrder: this.priorityOrder,
                 savedAt: Date.now()
             };
 
@@ -388,7 +494,24 @@ class TenantTokenManager {
             }
         }
 
-        // 2) 会话粘性：命中且该凭证仍可用则复用（不递增 usageCount）
+        // 2) 手动优先级顺序：面板拖动排序后，从上往下取第一个可用号。
+        //    压在会话粘性之前 —— 用户显式排了序，就不该被 30 分钟前的绑定覆盖。
+        //    黏性绑定仍在下面照常写入，所以同一会话后续仍落在同一个号上。
+        if (this.priorityOrder.length > 0) {
+            const pickedIndex = this._pickByPriority(validCredentials);
+            if (pickedIndex !== null) {
+                if (sessionKey) {
+                    this.sessionAffinity.set(sessionKey, {
+                        index: pickedIndex,
+                        expiresAt: Date.now() + TenantTokenManager.AFFINITY_TTL
+                    });
+                }
+                this._touchPick(pickedIndex);
+                return this.credentials[pickedIndex].data;
+            }
+        }
+
+        // 3) 会话粘性：命中且该凭证仍可用则复用（不递增 usageCount）
         if (sessionKey) {
             const bound = this.sessionAffinity.get(sessionKey);
             if (bound) {
@@ -404,7 +527,7 @@ class TenantTokenManager {
             }
         }
 
-        // 3) 选择
+        // 4) 选择
         let pickedIndex;
         if (this.selectionStrategy === 'weighted') {
             pickedIndex = this._pickWeighted(validCredentials);
@@ -432,6 +555,20 @@ class TenantTokenManager {
         this.lastPickedAt.set(index, now);
         this.lastUsedAt.set(index, now);
         this.lastReturnedIndex = index;
+    }
+
+    /**
+     * 按手动优先级顺序选择：返回顺序里第一个可用的下标
+     * @param {Array<{index:number}>} validCredentials - 已过滤掉冷却/禁用/过期的候选
+     * @returns {number|null} 无候选时返回 null（调用方落到后续策略）
+     */
+    _pickByPriority(validCredentials) {
+        const valid = new Set(validCredentials.map((vc) => vc.index));
+        for (const key of this.priorityOrder) {
+            const idx = this.credentials.findIndex((c) => basename(c.filePath) === key);
+            if (idx >= 0 && valid.has(idx)) return idx;
+        }
+        return null;
     }
 
     /**
@@ -965,15 +1102,33 @@ class TenantTokenManager {
     }
 
     /**
-     * 根据 user_id 自动将凭证设为活跃
+     * 新凭证入列后把它排到优先级第一位
+     *
+     * 刻意不走 setManualCredential：那方法会顺带清空全池冷却标记，
+     * 而"加了个新号"不等于"其他号的冷却都不算数了"——那会把 402 余额不足
+     * 之类的真实状态一起抹掉。
+     *
+     * 用户已经排过序时不打断他的顺序：新号补到队尾排队。
      * @param {string} userId
      */
     autoSelectByUserId(userId) {
         if (!userId) return;
-        const idx = this.credentials.findIndex(c => c.data.user_id === userId);
-        if (idx >= 0) {
-            this.setManualCredential(idx);
-        }
+        if (this.priorityOrder.length > 0) return;
+        const idx = this.credentials.findIndex((c) => c.data.user_id === userId);
+        if (idx < 0) return;
+
+        // 用"新号在最前，其余保持加载顺序"建立初始优先级
+        const key = basename(this.credentials[idx].filePath);
+        const others = this.credentials
+            .map((c) => basename(c.filePath))
+            .filter((f) => f !== key);
+        this.priorityOrder = [key, ...others];
+        // 手动选择是旧机制，这里清掉避免它盖过优先级
+        this.manualSelectedIndex = null;
+        this.clearAffinity();
+        this.saveState();
+        broadcast('codebuddy-state-changed').catch(() => {});
+        logger.debug(`New credential promoted to priority head: ${key}`);
     }
 
     /**
@@ -1132,7 +1287,7 @@ class TenantTokenManager {
      * @returns {Array}
      */
     getCredentialsInfo() {
-        return this.credentials.map((cred, index) => {
+        const list = this.credentials.map((cred, index) => {
             const data = cred.data;
             const filename = basename(cred.filePath);
 
@@ -1227,6 +1382,9 @@ class TenantTokenManager {
                 modelCooldowns,
                 failureStreak,
                 breakerThreshold: TenantTokenManager.BREAKER_THRESHOLD,
+                priorityRank: this.priorityOrder.length > 0
+                    ? this.priorityOrder.indexOf(filename)
+                    : -1,
                 isManualSelected: index === this.manualSelectedIndex,
                 isCurrentRotation: index === this.currentIndex,
                 isRoutable: unroutableReason === null,
@@ -1241,6 +1399,15 @@ class TenantTokenManager {
                 departmentInfo: data.department_info || ''
             };
         });
+
+        // 排过优先级就按优先级顺序返回面板：前端直接按数组顺序渲染，
+        // 若这里仍按文件加载顺序给出，拖完松手后 loadCredentials 会把顺序排回去，
+        // 用户看到的就是"拖了但没生效"。
+        // index 保留原始下标不动 —— 删除/禁用/设活跃都靠它定位。
+        if (this.priorityOrder.length > 0) {
+            list.sort((a, b) => a.priorityRank - b.priorityRank);
+        }
+        return list;
     }
 
     /**
@@ -1254,7 +1421,8 @@ class TenantTokenManager {
             autoRotationEnabled: this.autoRotationEnabled,
             rotationCount: this.rotationCount,
             rateLimitedCount: this.rateLimitedIndexes.size,
-            modelCooldownCount: this.modelCooldowns.size
+            modelCooldownCount: this.modelCooldowns.size,
+            priorityOrderEnabled: this.priorityOrder.length > 0
         };
     }
 

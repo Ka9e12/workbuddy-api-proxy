@@ -14,9 +14,9 @@ import logger from '../utils/logger.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {queryAllBillingStatus, performCheckin, getStartupCheckinConfig, setStartupCheckinConfig, getScheduleState} from '../services/codebuddy/billing.js';
 import {queryGrowthOverview, runGrowthDaily, getGrowthCredentials} from '../services/codebuddy/growth.js';
-import {getModelPricing} from '../services/codebuddy/api.js';
+import {getModelPricing, pickCredentialPerRealm} from '../services/codebuddy/api.js';
 import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
-import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, getEnterpriseBaseUrls, BLOCKED_DOMAINS, isPersonalHost, CODEBUDDY_CLI_VERSION} from '../services/codebuddy/config.js';
+import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, getEnterpriseBaseUrls, BLOCKED_DOMAINS, isPersonalHost, CODEBUDDY_CLI_VERSION, VENDOR_META, VENDOR_ORDER} from '../services/codebuddy/config.js';
 import {gatherAllStats, broadcast, isClusterMode, getCurrentPort} from '../utils/cluster-broadcaster.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -164,24 +164,53 @@ async function handleStatus(req, res) {
 }
 
 /**
- * 获取最新模型列表（含倍率、上下文窗口、能力标签），供管理面板"可用模型"展示
- * 上游拉取失败时回退到最近一次成功结果（标记 fromCache）
+ * 获取模型列表（含倍率、上下文窗口、能力标签），供管理面板"可用模型"展示
+ *
+ * 国内站与国际站的模型集合和倍率都不同，所以要**按站点分别拉取**。
+ * 之前只取 peekCredential() 一个号，面板上永远只有某一个站点的模型。
+ *
+ * 每个站点取一个代表账号（只读取号，不推进轮换计数）；某站点拉取失败时
+ * 单独标记该站点的 fromCache，不影响另一个站点。
  */
 async function handleModels(req, res) {
     const tm = credentialStore.getTokenManager();
-    // 只读取号：管理面板查询不应推进轮换计数
-    const credential = tm.peekCredential();
-    if (!credential) {
+
+    // 按站点挑代表账号（同一站点有多个号时取第一个，够用了）
+    const targets = pickCredentialPerRealm(tm.credentials);
+
+    if (targets.length === 0) {
         return sendJson(res, 200, {models: [], error: 'no_credentials'});
     }
 
-    try {
-        const models = await getModelPricing(credential);
-        sendJson(res, 200, {models, fromCache: models._fromCache === true});
-    } catch (error) {
-        logger.error('获取模型列表失败:', error.message);
-        sendJson(res, 200, {models: [], error: error.message});
-    }
+    const realms = [];
+    // 并发拉取两个站点，任一失败只影响自己那一组
+    await Promise.all(
+        targets.map(async ({realm, credential}) => {
+            try {
+                const models = await getModelPricing(credential);
+                realms.push({
+                    realm,
+                    models: Array.isArray(models) ? models : [],
+                    fromCache: models._fromCache === true,
+                    error: null
+                });
+            } catch (error) {
+                logger.error(`获取${realm}模型列表失败:`, error.message);
+                realms.push({realm, models: [], fromCache: false, error: error.message});
+            }
+        })
+    );
+
+    // 固定展示顺序：国内站在前
+    const order = {cn: 0, intl: 1};
+    realms.sort((a, b) => (order[a.realm] ?? 9) - (order[b.realm] ?? 9));
+
+    // 平铺数组保留给不认识 realms 的调用方；realms 是给面板分组用的
+    const models = realms.flatMap((r) => r.models);
+    // 厂商展示名与顺序一并下发，面板不再自己维护一份
+    const vendorLabels = {};
+    for (const key of VENDOR_ORDER) vendorLabels[key] = VENDOR_META[key].label;
+    sendJson(res, 200, {models, realms, vendorLabels, vendorOrder: VENDOR_ORDER});
 }
 
 /**
@@ -260,6 +289,38 @@ function handleCredentials(req, res, action) {
                         sendJson(res, 500, {error: error.message});
                     }
                 });
+                break;
+            }
+            case 'reorder': {
+                // 拖动排序结果：传文件名数组（稳定键），不传下标
+                const chunks = [];
+                req.on('data', (chunk) => chunks.push(chunk));
+                req.on('end', () => {
+                    try {
+                        const body = Buffer.concat(chunks).toString('utf8');
+                        const data = JSON.parse(body);
+                        const order = Array.isArray(data.order) ? data.order : null;
+                        if (!order) {
+                            sendJson(res, 400, {error: 'order 必须是文件名数组'});
+                            return;
+                        }
+                        const success = manager.setPriorityOrder(order);
+                        if (success) {
+                            sendJson(res, 200, {
+                                message: '优先级已保存，下一个请求起按新顺序选号'
+                            });
+                        } else {
+                            sendJson(res, 400, {error: '没有匹配的凭证'});
+                        }
+                    } catch (error) {
+                        sendJson(res, 500, {error: error.message});
+                    }
+                });
+                break;
+            }
+            case 'priority-clear': {
+                manager.clearPriorityOrder();
+                sendJson(res, 200, {message: '已恢复自动轮转'});
                 break;
             }
             case 'toggle-disable': {
@@ -688,6 +749,12 @@ export async function routeCodebuddyFrontend(req, res) {
     }
     if (pathname === '/codebuddyFE/credentials/select' && method === 'POST') {
         return handleCredentials(req, res, 'select');
+    }
+    if (pathname === '/codebuddyFE/credentials/reorder' && method === 'POST') {
+        return handleCredentials(req, res, 'reorder');
+    }
+    if (pathname === '/codebuddyFE/credentials/priority-clear' && method === 'POST') {
+        return handleCredentials(req, res, 'priority-clear');
     }
     if (pathname === '/codebuddyFE/credentials/toggle-disable' && method === 'POST') {
         return handleCredentials(req, res, 'toggle-disable');

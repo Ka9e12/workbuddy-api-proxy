@@ -93,9 +93,23 @@ const PERSONAL_HOSTS = ['copilot.tencent.com', 'www.codebuddy.ai'];
  * @param {string} [name] - 模型显示名（作为兜底启发式，暂未使用）
  * @returns {string} 归一化后的厂商名
  */
+/**
+ * 模型厂商归类（用于面板与控制台分组展示）
+ *
+ * 只按模型 id 前缀判断，不猜语义。认不出的归到 'others'。
+ * GPT 系单独成组：它是国际站的主力模型，混在「其他」里和其他杂项挤在一起
+ * 很难找，而且价格档位跨度大（x0.14 到 x3.31），单独列便于横向比较。
+ *
+ * @param {string} id
+ * @param {string} [name]
+ * @returns {'deepseek'|'gpt'|'zhipu'|'moonshot'|'minimax'|'hunyuan'|'gemini'|'others'}
+ */
 export function classifyModelVendor(id, name) {
     const lower = String(id || '').toLowerCase();
     if (lower.startsWith('deepseek-') || lower.startsWith('deepseek_')) return 'deepseek';
+    // gpt-5.5 / gpt-5.6-terra / gpt-4.1 等
+    if (lower.startsWith('gpt-') || lower.startsWith('gpt_')) return 'gpt';
+    if (lower.startsWith('gemini-') || lower.startsWith('gemini_')) return 'gemini';
     if (lower.startsWith('glm-') || lower.startsWith('glm_')) return 'zhipu';
     if (lower.startsWith('kimi-') || lower.startsWith('kimi_')) return 'moonshot';
     if (lower.startsWith('minimax-') || lower.startsWith('minimax_')) return 'minimax';
@@ -104,6 +118,25 @@ export function classifyModelVendor(id, name) {
     }
     return 'others';
 }
+
+/**
+ * 厂商的展示名与排序（面板和控制台共用，避免两处名字/顺序不一致）
+ */
+export const VENDOR_META = {
+    deepseek: {label: 'DeepSeek', order: 10},
+    gpt: {label: 'GPT', order: 20},
+    gemini: {label: 'Gemini', order: 30},
+    hunyuan: {label: '腾讯混元', order: 40},
+    zhipu: {label: '智谱 GLM', order: 50},
+    moonshot: {label: 'Kimi', order: 60},
+    minimax: {label: 'MiniMax', order: 70},
+    others: {label: '其他', order: 90}
+};
+
+/** 按 VENDOR_META 的 order 排序的厂商键列表 */
+export const VENDOR_ORDER = Object.keys(VENDOR_META).sort(
+    (a, b) => VENDOR_META[a].order - VENDOR_META[b].order
+);
 
 export const CODEBUDDY_MODELS_BY_BASE_URL = {
     'https://copilot.tencent.com': DOMESTIC_MODELS,

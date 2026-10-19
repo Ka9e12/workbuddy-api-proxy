@@ -149,7 +149,7 @@ function accountStreamOutcome({credIndex, model, sessionKey, error = null, abort
     // 也不是"上游业务失败"，不该罚账号
     if (error) {
         const outcome = classifyStreamOutcome({error, aborted, receivedAnyDelta});
-        noteStreamOutcome(credIndex, outcome, {sessionKey});
+        noteStreamOutcome(credIndex, outcome, {sessionKey, errorFrame});
         return;
     }
 
@@ -166,7 +166,9 @@ function accountStreamOutcome({credIndex, model, sessionKey, error = null, abort
     }
 
     const outcome = classifyStreamOutcome({aborted, sawUpstreamErrorFrame, receivedAnyDelta});
-    noteStreamOutcome(credIndex, outcome, {sessionKey});
+    // 带上 errorFrame：即便本分支按 5xx 语义记熔断，noteStreamOutcome 也会
+    // 先识别渠道级错误码（6021/11128）并短路，不误罚账号
+    noteStreamOutcome(credIndex, outcome, {sessionKey, errorFrame});
 }
 
 /**

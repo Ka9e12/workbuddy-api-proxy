@@ -4,6 +4,8 @@
  */
 
 import {credentialStore} from './credential-store.js';
+import {isUpstreamBusyCode, isWafBlockCode} from './api.js';
+import logger from '../../utils/logger.js';
 
 /**
  * 获取下一个可用凭证
@@ -54,6 +56,20 @@ export function noteUpstreamFailure(error, credIndex, model) {
     const status = error?.status;
     const code = error?.code;
 
+    // 渠道排队（code 6021）：推理集群打满，换任何账号都撞同一堵墙。
+    // 绝不能按 429 冷却账号 —— 那会在几秒内把整池健康号标成不可用，
+    // 而它们十分钟后本来就会自己恢复。这里一个动作都不做。
+    if (isUpstreamBusyCode(code)) {
+        logger.warn(`[CodeBuddy] 上游排队已满（code 6021），不冷却账号 #${credIndex}`);
+        return;
+    }
+    // WAF 拦截（code 11128）：账号本身没问题，是请求被渠道校验拒了，
+    // 通常因为短时间内请求过密。同样不按账号故障处理。
+    if (isWafBlockCode(code)) {
+        logger.warn(`[CodeBuddy] 上游渠道校验拦截（code 11128），不冷却账号 #${credIndex}`);
+        return;
+    }
+
     // 模型级限流（code 6004）：只冷却该模型，不改账号级冷却，切模型即可用
     if (code === 6004 || code === '6004') {
         tm.markModelCooldown(credIndex, model, tm.constructor.MODEL_COOLDOWN);
@@ -96,10 +112,20 @@ export function noteUpstreamFailure(error, credIndex, model) {
  * @param {string} outcome - classifyStreamOutcome 的结果
  * @param {Object} [meta]
  * @param {string} [meta.sessionKey] - 会话键（network 终态时解绑粘性，避免下次仍钉在坏号上）
+ * @param {Object} [meta.errorFrame] - 流内 error 帧（可能带 status/code）；带 6021/11128 时不罚账号
  */
 export function noteStreamOutcome(index, outcome, meta = {}) {
     if (!Number.isInteger(index) || index < 0) return;
     const tm = credentialStore.getTokenManager();
+
+    // 流内 error 帧若带渠道级错误码，先短路：这不是账号的问题。
+    // 调用方对"带 status/code 的错误帧"通常直接走 noteUpstreamFailure，
+    // 这里是兜底，避免某条路径漏判后仍按 5xx 记熔断。
+    const frameCode = meta.errorFrame?.code;
+    if (isUpstreamBusyCode(frameCode) || isWafBlockCode(frameCode)) {
+        logger.warn(`[CodeBuddy] 流内错误帧 code ${frameCode}（渠道级），不罚账号 #${index}`);
+        return;
+    }
 
     switch (outcome) {
         case 'success':
