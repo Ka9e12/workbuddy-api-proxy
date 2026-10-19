@@ -1,6 +1,6 @@
 # WorkBuddy API Proxy
 
-把 **腾讯 CodeBuddy / WorkBuddy 订阅**接进 Claude Code、Codex、DSH 和任何 OpenAI / Anthropic 客户端。
+把 **腾讯 CodeBuddy / WorkBuddy 反代**接进 Claude Code、Codex、DSH 和任何 OpenAI / Anthropic 客户端。
 
 CodeBuddy 官方只给 OpenAI 形态的接口，而这些编码助手多数只认 Anthropic Messages。这个自托管网关补上中间那一段——**双协议互转、多账号轮换、失败自动换号、积分与签到托管**。
 
@@ -33,6 +33,20 @@ CodeBuddy 官方只给 OpenAI 形态的接口，而这些编码助手多数只�
 ---
 
 ## 快速开始
+
+### 0. 让你的 AI 帮你部署
+
+如果你在用 Claude Code、Codex、Cursor 这类编码助手，把下面这句丢给它就行：
+
+```
+帮我部署 https://github.com/Ka9e12/workbuddy-api-proxy 并且告诉我如何使用
+```
+
+它会自己 clone、装依赖、起服务，再把面板地址和接入方式告诉你。你唯一需要亲自做的是最后一件事——在面板里完成 CodeBuddy 的 OAuth 登录，因为那一步必须点浏览器。
+
+> 想让它一次做对，可以在提示里补一句现在的状态，比如「我 Windows，没装 Node」「我 macOS，已经有 Node 20」。
+
+下面的手动步骤留着，用于 AI 跑不通或者你想自己看清每一步的时候。
 
 ### 1. 确认 Node.js
 
