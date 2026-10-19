@@ -1,0 +1,19 @@
+node_modules/
+*.log
+.DS_Store
+
+# 环境变量（含账号密码等敏感信息，不提交）
+.env
+
+# Copilot token 存储目录
+.copilot/
+
+# CodeBuddy 凭证存储目录
+.codebuddy/
+
+# Relay 凭证存储目录
+.relay/
+
+# Gateway 鉴权密钥和会话密钥
+.gateway/
+

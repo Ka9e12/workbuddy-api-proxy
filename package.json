@@ -1,0 +1,57 @@
+{
+    "name": "workbuddy-api-proxy",
+    "version": "1.0.0",
+    "description": "把 CodeBuddy / WorkBuddy 订阅接进 Claude Code、Codex、DSH 和任何 OpenAI / Anthropic 客户端",
+    "type": "module",
+    "main": "src/index.js",
+    "scripts": {
+        "start": "node src/index.js",
+        "debug": "cross-env LOG_LEVEL=DEBUG node --use-system-ca src/index.js",
+        "dev": "node --watch src/index.js",
+        "test": "node --test \"tests/*.test.js\"",
+        "startup:enable": "powershell -ExecutionPolicy Bypass -File scripts/startup.ps1 enable",
+        "startup:disable": "powershell -ExecutionPolicy Bypass -File scripts/startup.ps1 disable",
+        "startup:status": "powershell -ExecutionPolicy Bypass -File scripts/startup.ps1 status",
+        "schedule:enable": "powershell -ExecutionPolicy Bypass -File scripts/schedule.ps1 enable",
+        "schedule:disable": "powershell -ExecutionPolicy Bypass -File scripts/schedule.ps1 disable",
+        "schedule:status": "powershell -ExecutionPolicy Bypass -File scripts/schedule.ps1 status",
+        "task:checkin": "node scripts/billing-task.mjs checkin",
+        "task:growth": "node scripts/billing-task.mjs growth"
+    },
+    "dependencies": {
+        "@tencent-ai/codebuddy-code": "^2.93.1",
+        "cross-env": "^7.0.3",
+        "dotenv": "^17.2.4",
+        "https-proxy-agent": "^7.0.6",
+        "jsonwebtoken": "^9.0.3",
+        "socks-proxy-agent": "^8.0.5",
+        "ws": "^8.21.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "keywords": [
+        "claude",
+        "claude code",
+        "claude-code-router",
+        "codebuddy",
+        "workbuddy",
+        "copilot",
+        "anthropic",
+        "openai",
+        "anthropic-api",
+        "openai-to-anthropic",
+        "api-proxy",
+        "llm-gateway",
+        "api",
+        "proxy",
+        "relay"
+    ],
+    "author": "Ka9e12",
+    "email": "kuanshen48@gmail.com",
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:Ka9e12/workbuddy-api-proxy.git"
+    },
+    "license": "MIT"
+}

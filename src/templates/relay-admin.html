@@ -1,0 +1,1621 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Relay 管理面板</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #f5f7fa;
+                color: #333;
+                line-height: 1.6;
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+            header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 20px 30px;
+                margin-bottom: 30px;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            header h1 {
+                font-size: 1.5rem;
+            }
+            .header-right {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+            .card {
+                background: white;
+                border-radius: 12px;
+                padding: 24px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            }
+            .card h2 {
+                color: #667eea;
+                margin-bottom: 16px;
+                font-size: 1.15rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                font-size: 0.9rem;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                font-weight: 500;
+            }
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .btn-primary:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            }
+            .btn-danger {
+                background: #ef4444;
+                color: white;
+            }
+            .btn-danger:hover {
+                background: #dc2626;
+            }
+            .btn-secondary {
+                background: #f3f4f6;
+                color: #374151;
+            }
+            .btn-secondary:hover {
+                background: #e5e7eb;
+            }
+            .btn-success {
+                background: #10b981;
+                color: white;
+            }
+            .btn-success:hover {
+                background: #059669;
+            }
+            .btn-warning {
+                background: #f59e0b;
+                color: white;
+            }
+            .btn-warning:hover {
+                background: #d97706;
+            }
+            .btn:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+            .btn-small {
+                padding: 6px 12px;
+                font-size: 0.8rem;
+            }
+            .loading {
+                display: inline-block;
+                width: 18px;
+                height: 18px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                0% {
+                    transform: rotate(0deg);
+                }
+                100% {
+                    transform: rotate(360deg);
+                }
+            }
+            .toast {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 14px 22px;
+                border-radius: 8px;
+                color: white;
+                font-weight: 500;
+                transform: translateY(100px);
+                opacity: 0;
+                transition: all 0.3s ease;
+                z-index: 1000;
+            }
+            .toast.show {
+                transform: translateY(0);
+                opacity: 1;
+            }
+            .toast.success {
+                background: #10b981;
+            }
+            .toast.error {
+                background: #ef4444;
+            }
+            .empty-state {
+                text-align: center;
+                padding: 30px;
+                color: #9ca3af;
+            }
+            .api-key-display {
+                background: #f1f5f9;
+                padding: 14px 18px;
+                border-radius: 8px;
+                font-family: monospace;
+                font-size: 0.9rem;
+                word-break: break-all;
+                border: 2px solid #667eea;
+                color: #374151;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .api-key-text {
+                flex: 1;
+                word-break: break-all;
+            }
+            .api-key-actions {
+                display: flex;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .btn-icon {
+                padding: 6px 10px;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                transition: all 0.2s;
+                background: #e5e7eb;
+                color: #374151;
+            }
+            .btn-icon:hover {
+                background: #d1d5db;
+            }
+            .btn-icon.copy-success {
+                background: #10b981;
+                color: white;
+            }
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 16px;
+            }
+            .stat-item {
+                background: #f8fafc;
+                border-radius: 8px;
+                padding: 20px;
+                text-align: center;
+            }
+            .stat-value {
+                font-size: 2rem;
+                font-weight: 700;
+                color: #667eea;
+                line-height: 1.2;
+            }
+            .stat-label {
+                font-size: 0.85rem;
+                color: #6b7280;
+                margin-top: 6px;
+            }
+            .usage-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+            .usage-card-header h2 {
+                margin-bottom: 0;
+            }
+            .month-select {
+                padding: 6px 12px;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                color: #374151;
+                background: white;
+                cursor: pointer;
+                outline: none;
+            }
+            .month-select:focus {
+                border-color: #667eea;
+            }
+            .chart-container {
+                width: 100%;
+                height: 280px;
+                margin-top: 16px;
+            }
+
+            /* 使用指南样式 */
+            .guide-steps {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+            .guide-step {
+                display: flex;
+                gap: 14px;
+                align-items: flex-start;
+            }
+            .guide-step-num {
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                font-weight: 700;
+                font-size: 0.85rem;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
+            .guide-step-body {
+                flex: 1;
+            }
+            .guide-step-title {
+                font-weight: 600;
+                color: #1f2937;
+                margin-bottom: 4px;
+                font-size: 0.95rem;
+            }
+            .guide-step-desc {
+                font-size: 0.85rem;
+                color: #6b7280;
+                line-height: 1.5;
+            }
+            .guide-step-desc code {
+                background: #f1f5f9;
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-size: 0.82rem;
+                color: #7c3aed;
+            }
+            .guide-code-block {
+                position: relative;
+                background: #1e293b;
+                border-radius: 8px;
+                margin-top: 8px;
+                overflow: hidden;
+            }
+            .guide-code-block pre {
+                margin: 0;
+                padding: 14px 18px;
+                padding-right: 48px;
+                color: #e2e8f0;
+                font-size: 0.82rem;
+                font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+                line-height: 1.6;
+                overflow-x: auto;
+                white-space: pre;
+            }
+            .guide-copy-btn {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                background: rgba(255, 255, 255, 0.1);
+                color: #e2e8f0;
+                border: none;
+            }
+            .guide-copy-btn:hover {
+                background: rgba(255, 255, 255, 0.2);
+            }
+
+            /* 上游管理样式 */
+            .upstream-list {
+                list-style: none;
+            }
+            .upstream-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 14px 16px;
+                background: #f8fafc;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                border-left: 4px solid #d1d5db;
+                transition: all 0.2s;
+                cursor: pointer;
+            }
+            .upstream-item:hover:not(.active-upstream) {
+                background: #eef2ff;
+                border-left-color: #667eea;
+            }
+            .upstream-item.active-upstream {
+                border-left-color: #10b981;
+                background: #f0fdf4;
+                cursor: default;
+            }
+            .upstream-item.rate-limited {
+                border-left-color: #8b5cf6;
+            }
+            .upstream-item.rate-limited:hover:not(.active-upstream) {
+                border-left-color: #8b5cf6;
+            }
+            .drag-handle {
+                cursor: grab;
+                color: #9ca3af;
+                font-size: 1rem;
+                padding: 4px 8px;
+                user-select: none;
+                flex-shrink: 0;
+            }
+            .upstream-info p {
+                color: #6b7280;
+                font-size: 0.8rem;
+                line-height: 24px;
+            }
+            .upstream-info .upstream-proxy {
+                color: #9ca3af;
+                font-size: 0.78rem;
+            }
+            .upstream-actions {
+                display: flex;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .tag {
+                display: inline-block;
+                font-size: 0.7rem;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-weight: 600;
+                vertical-align: middle;
+            }
+            .tag-active {
+                background: #10b981;
+                color: white;
+            }
+            .tag-priority {
+                background: #e5e7eb;
+                color: #6b7280;
+            }
+            .tag-model {
+                background: #ede9fe;
+                color: #7c3aed;
+                padding: 0px 6px;
+                line-height: 22px;
+                margin-right: 4px;
+                vertical-align: top;
+            }
+            .test-result {
+                font-size: 0.78rem;
+                margin-left: 4px;
+            }
+            .test-result.success {
+                color: #10b981;
+            }
+            .test-result.error {
+                color: #ef4444;
+            }
+
+            /* 对话框 */
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 900;
+                justify-content: center;
+                align-items: center;
+            }
+            .modal-overlay.show {
+                display: flex;
+            }
+            .modal-box {
+                background: white;
+                border-radius: 16px;
+                padding: 32px;
+                width: 100%;
+                max-width: 480px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+                max-height: 90vh;
+                overflow-y: auto;
+            }
+            .modal-box h3 {
+                font-size: 1.2rem;
+                color: #1f2937;
+                margin-bottom: 20px;
+            }
+            .modal-box .form-group {
+                margin-bottom: 16px;
+            }
+            .modal-box .form-group label {
+                display: block;
+                font-weight: 500;
+                margin-bottom: 6px;
+                color: #374151;
+                font-size: 0.9rem;
+            }
+            .modal-box .form-group input {
+                width: 100%;
+                padding: 10px 14px;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                font-size: 0.9rem;
+                transition: border-color 0.2s;
+            }
+            .modal-box .form-group input:focus {
+                outline: none;
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            }
+            .modal-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 10px;
+                margin-top: 24px;
+            }
+            .btn-loading {
+                pointer-events: none;
+                opacity: 0.7;
+            }
+            .btn-loading::after {
+                content: '';
+                display: inline-block;
+                width: 14px;
+                height: 14px;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-top: 2px solid white;
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+                margin-left: 6px;
+                vertical-align: middle;
+            }
+            .proxy-options-row {
+                display: flex !important;
+                align-items: flex-start;
+                gap: 10px;
+                margin-top: 8px;
+                margin-bottom: 0;
+                color: #374151;
+                font-size: 0.9rem;
+            }
+            .proxy-options-row input[type="checkbox"] {
+                width: 16px !important;
+                height: 16px;
+                margin-top: 2px;
+                accent-color: #667eea;
+                flex: 0 0 auto;
+                padding: 0 !important;
+                border: none !important;
+            }
+            .proxy-option-text {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+            .proxy-option-title {
+                font-weight: 500;
+                color: #1f2937;
+            }
+            .proxy-option-desc {
+                color: #6b7280;
+                font-size: 0.8rem;
+                line-height: 1.4;
+            }
+        </style>
+        <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>Relay 管理面板</h1>
+                <div class="header-right"></div>
+            </header>
+
+            <div id="mainContent">
+                <div class="empty-state">
+                    <div class="loading"></div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 添加/编辑上游对话框 -->
+        <div id="upstreamModal" class="modal-overlay">
+            <div class="modal-box">
+                <h3 id="upstreamModalTitle">添加上游</h3>
+                <div class="form-group">
+                    <label for="upstreamName">名称</label>
+                    <input type="text" id="upstreamName" placeholder="如：DeepSeek" />
+                </div>
+                <div class="form-group">
+                    <label for="upstreamBaseUrl">Base URL</label>
+                    <input type="text" id="upstreamBaseUrl" placeholder="https://api.deepseek.com" />
+                </div>
+                <div class="form-group">
+                    <label for="upstreamProtocol">上游协议</label>
+                    <select
+                        id="upstreamProtocol"
+                        style="
+                            width: 100%;
+                            padding: 10px 14px;
+                            border: 1px solid #d1d5db;
+                            border-radius: 8px;
+                            font-size: 0.9rem;
+                        ">
+                        <option value="openai">OpenAI Chat Completions</option>
+                        <option value="responses">OpenAI Responses API</option>
+                        <option value="anthropic">Anthropic Messages API</option>
+                    </select>
+                </div>
+                <div class="form-group" id="upstreamWSGroup" style="display: none">
+                    <label class="proxy-options-row" for="upstreamWS" style="margin: 0">
+                        <input type="checkbox" id="upstreamWS" />
+                        <span class="proxy-option-text">
+                            <span class="proxy-option-title">WebSocket 模式（仅 Responses 协议）</span>
+                        </span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="upstreamApiKey">API Key</label>
+                    <input type="password" id="upstreamApiKey" placeholder="sk-xxx..." />
+                </div>
+                <div class="form-group">
+                    <label for="upstreamProxy">代理地址（可选）</label>
+                    <input type="text" id="upstreamProxy" />
+                </div>
+                <div class="form-group">
+                    <label class="proxy-options-row" for="upstreamSkipTls">
+                        <input type="checkbox" id="upstreamSkipTls" />
+                        <span class="proxy-option-text">
+                            <span class="proxy-option-title">跳过 TLS 证书验证</span>
+                            <span class="proxy-option-desc">代理或上游使用自签名证书时可启用</span>
+                        </span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>模型映射 (model_map)</label>
+                    <p style="font-size: 0.78rem; color: #9ca3af; margin-bottom: 6px">
+                        每行一个映射: 客户端模型名=上游实际模型名，如 sonnet=kimi-k2.6
+                    </p>
+                    <textarea
+                        id="upstreamModelMap"
+                        rows="3"
+                        style="
+                            width: 100%;
+                            padding: 10px 14px;
+                            border: 1px solid #d1d5db;
+                            border-radius: 8px;
+                            font-size: 0.85rem;
+                            font-family: monospace;
+                            resize: vertical;
+                        "
+                        placeholder="sonnet=kimi-k2.6&#10;opus=kimi-k2.6&#10;haiku=kimi-k2.5"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeUpstreamModal()">取消</button>
+                    <button id="upstreamModalSubmit" class="btn btn-primary" onclick="submitUpstream()">添加</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="toast" class="toast"></div>
+
+        <script>
+            const API_BASE = '/relayFE';
+            let upstreams = [];
+            let editingUpstreamIndex = null;
+            let apiKeyVisible = false;
+            let apiKeyPlain = '';
+            let apiKeyMasked = '';
+            let currentMonth = '';
+            let apiCallsChartInstance = null;
+            let tokensChartInstance = null;
+
+            function showToast(message, type = 'success') {
+                const toast = document.getElementById('toast');
+                toast.textContent = message;
+                toast.className = 'toast ' + type;
+                toast.classList.add('show');
+                const duration = type === 'error' ? 8000 : 3000;
+                setTimeout(() => toast.classList.remove('show'), duration);
+            }
+
+            async function loadMyTenant() {
+                try {
+                    const response = await fetch(API_BASE + '/status');
+                    const data = await response.json();
+
+                    // Load upstreams
+                    loadUpstreams();
+                    startStatsAutoRefresh();
+                    currentMonth = getCurrentMonth();
+                    loadAvailableMonths();
+                    await loadDailyChartData();
+
+                    // Update API key display
+                    apiKeyMasked = data.apiKeyPrefix || '****';
+                    apiKeyPlain = data.apiKeyPlain || '';
+                    apiKeyVisible = false;
+                    const apiKeyEl = document.getElementById('apiKeyText');
+                    if (apiKeyEl) apiKeyEl.textContent = apiKeyMasked;
+                    updateGuideConfig();
+                } catch (error) {
+                    showToast('加载信息失败: ' + error.message, 'error');
+                }
+            }
+
+            function formatStat(n) {
+                if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+                if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+                return new Intl.NumberFormat('zh-CN').format(n);
+            }
+
+            function formatNumber(n) {
+                return new Intl.NumberFormat('zh-CN').format(n);
+            }
+
+            function getCurrentMonth() {
+                const now = new Date();
+                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            }
+
+            function loadAvailableMonths() {
+                const select = document.getElementById('monthSelect');
+                if (!select) return;
+                const now = new Date();
+                const months = [];
+                for (let i = 0; i < 3; i++) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    months.push(key);
+                }
+                select.innerHTML = months
+                    .map((m) => {
+                        const [y, mo] = m.split('-');
+                        return `<option value="${m}"${m === currentMonth ? ' selected' : ''}>${y} - ${parseInt(mo)}月</option>`;
+                    })
+                    .join('');
+            }
+
+            async function onMonthChange() {
+                const select = document.getElementById('monthSelect');
+                if (select) {
+                    currentMonth = select.value;
+                }
+                await loadDailyChartData();
+            }
+
+            async function loadDailyChartData() {
+                if (!currentMonth) return;
+                try {
+                    const response = await fetch(`/relayFE/stats/daily?month=${currentMonth}`);
+                    const result = await response.json();
+                    renderCharts(result.data || {}, currentMonth);
+                } catch (error) {
+                    console.error('加载每日数据失败:', error);
+                }
+            }
+
+            function getDaysInMonth(monthKey) {
+                const [year, month] = monthKey.split('-').map(Number);
+                return new Date(year, month, 0).getDate();
+            }
+
+            function renderCharts(dailyData, monthKey) {
+                let daysInMonth = getDaysInMonth(monthKey);
+                const now = new Date();
+                const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                if (monthKey === curMonth) {
+                    daysInMonth = Math.min(daysInMonth, now.getDate());
+                }
+                const dates = [];
+                const apiCallsData = [];
+                const inputTokensData = [];
+                const outputTokensData = [];
+                const cacheHitTokensData = [];
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dayKey = String(d).padStart(2, '0');
+                    const dayData = dailyData[dayKey] || {
+                        api_calls: 0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_hit_tokens: 0
+                    };
+                    dates.push(d);
+                    apiCallsData.push(dayData.api_calls);
+                    inputTokensData.push(dayData.input_tokens);
+                    outputTokensData.push(dayData.output_tokens);
+                    cacheHitTokensData.push(dayData.cache_hit_tokens || 0);
+                }
+
+                // 按月份聚合更新统计卡片
+                const totalApiCalls = apiCallsData.reduce((s, v) => s + v, 0);
+                const totalInputTokens = inputTokensData.reduce((s, v) => s + v, 0);
+                const totalOutputTokens = outputTokensData.reduce((s, v) => s + v, 0);
+                const totalTokens = totalInputTokens + totalOutputTokens;
+                const totalCacheHitTokens = cacheHitTokensData.reduce((s, v) => s + v, 0);
+                const callEl = document.getElementById('apiCallCount');
+                if (callEl) {
+                    callEl.textContent = formatStat(totalApiCalls);
+                    callEl.title = new Intl.NumberFormat('zh-CN').format(totalApiCalls);
+                }
+                const inEl = document.getElementById('inputTokensCount');
+                if (inEl) {
+                    inEl.textContent = formatStat(totalInputTokens);
+                    inEl.title = new Intl.NumberFormat('zh-CN').format(totalInputTokens);
+                }
+                const outEl = document.getElementById('outputTokensCount');
+                if (outEl) {
+                    outEl.textContent = formatStat(totalOutputTokens);
+                    outEl.title = new Intl.NumberFormat('zh-CN').format(totalOutputTokens);
+                }
+                const cacheHitEl = document.getElementById('cacheHitTokensCount');
+                if (cacheHitEl) {
+                    cacheHitEl.textContent = formatStat(totalCacheHitTokens);
+                    cacheHitEl.title = new Intl.NumberFormat('zh-CN').format(totalCacheHitTokens);
+                }
+                const cacheRateEl = document.getElementById('cacheHitRate');
+                if (cacheRateEl) {
+                    const cacheRate =
+                        totalInputTokens > 0
+                            ? Math.min(100, Math.round((totalCacheHitTokens / totalInputTokens) * 100))
+                            : 0;
+                    cacheRateEl.textContent = cacheRate + '%';
+                    cacheRateEl.title = cacheRate + '%';
+                }
+
+                // 折线图 - API请求次数
+                const apiCallsEl = document.getElementById('apiCallsChart');
+                if (apiCallsEl) {
+                    if (!apiCallsChartInstance) {
+                        apiCallsChartInstance = echarts.init(apiCallsEl);
+                    }
+                    apiCallsChartInstance.setOption(
+                        {
+                            title: {text: 'API 请求次数', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                formatter: function (params) {
+                                    const p = params[0];
+                                    const day = String(p.dataIndex + 1).padStart(2, '0');
+                                    return `<b>${monthKey}-${day}</b><br/>请求次数 ${p.value}`;
+                                }
+                            },
+                            grid: {left: '50px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: '次', axisLabel: {fontSize: 11}, splitNumber: 2},
+                            series: [
+                                {
+                                    type: 'line',
+                                    data: apiCallsData,
+                                    smooth: true,
+                                    showSymbol: false,
+                                    emphasis: {focus: 'series', itemStyle: {color: '#667eea'}},
+                                    areaStyle: {opacity: 0.15},
+                                    lineStyle: {color: '#667eea', width: 2},
+                                    itemStyle: {color: '#667eea'}
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+
+                // 柱状图 - Tokens（堆叠：缓存命中/未命中/输出）
+                const tokensEl = document.getElementById('tokensChart');
+                if (tokensEl) {
+                    if (!tokensChartInstance) {
+                        tokensChartInstance = echarts.init(tokensEl);
+                    }
+                    tokensChartInstance.setOption(
+                        {
+                            title: {text: 'Tokens 使用量', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                extraCssText: 'min-width: 300px',
+                                formatter: function (params) {
+                                    const day = String(params[0].dataIndex + 1).padStart(2, '0');
+                                    const barColors = ['#a0dcfd', '#60b3fe', '#0c70f3'];
+                                    const totalAll = params.reduce((s, p) => s + p.value, 0);
+                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(totalAll)} tokens</b></div>`;
+                                    params.forEach((p, i) => {
+                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
+                                    });
+                                    return tip;
+                                }
+                            },
+                            legend: {
+                                data: ['输入(命中缓存)', '输入(未命中缓存)', '输出'],
+                                top: '30px',
+                                right: '0',
+                                textStyle: {fontSize: 12}
+                            },
+                            grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: 'Tokens', axisLabel: {fontSize: 11}, splitNumber: 1},
+                            series: [
+                                {
+                                    name: '输入(命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: cacheHitTokensData,
+                                    itemStyle: {color: '#a0dcfd'}
+                                },
+                                {
+                                    name: '输入(未命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: inputTokensData.map((v, i) => v - (cacheHitTokensData[i] || 0)),
+                                    itemStyle: {color: '#60b3fe'}
+                                },
+                                {
+                                    name: '输出',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: outputTokensData,
+                                    itemStyle: {color: '#0c70f3'}
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+            }
+
+            async function resetCustomStats() {
+                if (!confirm('确定要重置自定义统计数据吗？此操作不可撤销。')) return;
+                try {
+                    const response = await fetch(`/relayFE/stats/custom-reset`, {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        showToast('自定义统计数据已重置');
+                        refreshApiStats();
+                    } else {
+                        throw new Error('重置失败');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            async function reloadAndRefreshStats() {
+                try {
+                    await fetch(`/relayFE/stats/refresh`, {method: 'POST'});
+                    await Promise.all([refreshApiStats(), loadDailyChartData()]);
+                    showToast('数据已刷新');
+                } catch (error) {
+                    showToast('刷新失败: ' + error.message, 'error');
+                }
+            }
+
+            async function refreshApiStats() {
+                try {
+                    const response = await fetch(`/relayFE/stats`);
+                    const data = await response.json();
+                    const cCallEl = document.getElementById('customApiCallCount');
+                    if (cCallEl) {
+                        cCallEl.textContent = formatStat(data.custom_api_call_count || 0);
+                        cCallEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_api_call_count || 0);
+                    }
+                    const cInEl = document.getElementById('customInputTokensCount');
+                    if (cInEl) {
+                        cInEl.textContent = formatStat(data.custom_input_tokens || 0);
+                        cInEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_input_tokens || 0);
+                    }
+                    const cOutEl = document.getElementById('customOutputTokensCount');
+                    if (cOutEl) {
+                        cOutEl.textContent = formatStat(data.custom_output_tokens || 0);
+                        cOutEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_output_tokens || 0);
+                    }
+                    const cCacheHitEl = document.getElementById('customCacheHitTokensCount');
+                    if (cCacheHitEl) {
+                        cCacheHitEl.textContent = formatStat(data.custom_cache_hit_tokens || 0);
+                        cCacheHitEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_cache_hit_tokens || 0);
+                    }
+                    const cCacheRateEl = document.getElementById('customCacheHitRate');
+                    if (cCacheRateEl) {
+                        const cacheRate =
+                            (data.custom_input_tokens || 0) > 0
+                                ? Math.min(
+                                      100,
+                                      Math.round(((data.custom_cache_hit_tokens || 0) / data.custom_input_tokens) * 100)
+                                  )
+                                : 0;
+                        cCacheRateEl.textContent = cacheRate + '%';
+                        cCacheRateEl.title = cacheRate + '%';
+                    }
+                } catch {}
+            }
+
+            function startStatsAutoRefresh() {
+                refreshApiStats();
+                setInterval(() => {
+                    refreshApiStats();
+                    if (currentMonth) loadDailyChartData();
+                }, 30000);
+            }
+
+            function maskApiKey(key) {
+                if (!key || key.length < 12) return '****';
+                return key.slice(0, 8) + '****' + key.slice(-4);
+            }
+
+            function renderPage() {
+                apiKeyVisible = false;
+                document.getElementById('mainContent').innerHTML = `
+                <div class="card">
+                    <h2>上游配置管理
+                        <button class="btn btn-success btn-small" id="testAllBtn" onclick="testAllUpstreams()" style="margin-left: auto; margin-right: 8px;">批量测试</button>
+                        <button class="btn btn-primary btn-small" onclick="openAddUpstreamModal()">+ 添加上游</button>
+                    </h2>
+                    <div id="upstreamsList">
+                        <div class="empty-state"><p>加载中...</p></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>API Key <span style="font-size:0.7em;color:#58a6ff;font-weight:400;">所有端点共用</span></h2>
+                    <div class="api-key-display">
+                        <span id="apiKeyText" class="api-key-text">${apiKeyMasked}</span>
+                        <div class="api-key-actions">
+                            <button class="btn-icon" onclick="toggleApiKeyVisibility()" id="toggleKeyBtn" title="显示/隐藏">👁</button>
+                            <button class="btn-icon" onclick="copyApiKey()" id="copyKeyBtn" title="复制">📋</button>
+                            <button class="btn-icon" onclick="resetApiKey()" id="resetKeyBtn" title="重置">🔄</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>使用指南</h2>
+                    <div class="guide-steps">
+                        <div class="guide-step">
+                            <div class="guide-step-num">1</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">添加上游配置</div>
+                                <div class="guide-step-desc">点击上方「+ 添加上游」，先选择上游协议类型（OpenAI Chat、Responses API 或 Anthropic Messages），再填写 Base URL、API Key。默认会把客户端模型名原样透传给上游；如需转换模型名，再配置模型映射（如 <code>sonnet[1m]=your-upstream-model</code>）</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">2</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 Anthropic 接口协议工具</div>
+                                <div class="guide-step-desc">如 Claude Code、Claude Desktop 等，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code> 等变体。</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideConfig()" title="复制">📋</button>
+                                    <pre id="guideConfigCode"></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">3</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI 接口协议工具</div>
+                                <div class="guide-step-desc">如 Cursor、Continue、Cline 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideOpenAIUrl()" title="复制">📋</button>
+                                    <pre id="guideOpenAIUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">4</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI Responses API 工具</div>
+                                <div class="guide-step-desc">如 Cherry Studio 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideResponsesUrl()" title="复制">📋</button>
+                                    <pre id="guideResponsesUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="usage-card-header">
+                        <h2>使用统计</h2>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <button class="btn-icon" onclick="reloadAndRefreshStats()" title="刷新">🔄</button>
+                            <select id="monthSelect" class="month-select" onchange="onMonthChange()"></select>
+                        </div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="apiCallCount" title="0">0</div>
+                            <div class="stat-label">API 调用次数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="inputTokensCount" title="0">0</div>
+                            <div class="stat-label">输入 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="outputTokensCount" title="0">0</div>
+                            <div class="stat-label">输出 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitRate" title="0">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                    </div>
+                    <div id="apiCallsChart" class="chart-container"></div>
+                    <div id="tokensChart" class="chart-container"></div>
+                </div>
+
+                <div class="card">
+                    <h2>自定义统计</h2>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="customApiCallCount" title="0">0</div>
+                            <div class="stat-label">API 调用次数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customInputTokensCount" title="0">0</div>
+                            <div class="stat-label">输入 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customOutputTokensCount" title="0">0</div>
+                            <div class="stat-label">输出 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitRate" title="0%">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px;">
+                        <button class="btn btn-primary btn-small" onclick="reloadAndRefreshStats()">刷新</button>
+                        <button class="btn btn-primary btn-small" onclick="resetCustomStats()">重置</button>
+                    </div>
+                </div>
+            `;
+                // 填充使用指南代码块
+                updateGuideConfig();
+            }
+
+            function getRelayBaseUrl() {
+                return window.location.origin;
+            }
+
+            function updateGuideConfig() {
+                const baseUrl = getRelayBaseUrl();
+                const el = document.getElementById('guideConfigCode');
+                if (!el) return;
+                el.textContent = `{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "${apiKeyPlain || apiKeyMasked}",
+    "ANTHROPIC_BASE_URL": "${baseUrl}/relay/anthropic",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus"
+  }
+}`;
+                const openaiUrlEl = document.getElementById('guideOpenAIUrl');
+                if (openaiUrlEl) {
+                    openaiUrlEl.textContent = `${baseUrl}/relay/v1`;
+                }
+                const responsesUrlEl = document.getElementById('guideResponsesUrl');
+                if (responsesUrlEl) {
+                    responsesUrlEl.textContent = `${baseUrl}/relay/v1`;
+                }
+            }
+
+            function copyGuideConfig() {
+                const el = document.getElementById('guideConfigCode');
+                if (!el) return;
+                copyText(el.textContent);
+            }
+
+            function copyGuideOpenAIUrl() {
+                const el = document.getElementById('guideOpenAIUrl');
+                if (!el) return;
+                copyText(el.textContent);
+            }
+
+            function copyGuideResponsesUrl() {
+                const el = document.getElementById('guideResponsesUrl');
+                if (!el) return;
+                copyText(el.textContent);
+            }
+
+            function copyText(text) {
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(text);
+                    } else {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = text;
+                        textarea.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                    }
+                    showToast('已复制');
+                } catch {
+                    showToast('复制失败', 'error');
+                }
+            }
+
+            // ========== 上游管理 ==========
+
+            async function loadUpstreams() {
+                try {
+                    const response = await fetch(`/relayFE/upstreams`);
+                    const data = await response.json();
+                    upstreams = data.upstreams || [];
+                    renderUpstreams();
+                } catch (error) {
+                    showToast('加载上游列表失败: ' + error.message, 'error');
+                }
+            }
+
+            function renderUpstreams() {
+                const list = document.getElementById('upstreamsList');
+                if (!list) return;
+                if (!upstreams || upstreams.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>暂无上游配置，请点击上方按钮添加</p></div>';
+                    return;
+                }
+                list.innerHTML =
+                    '<ul class="upstream-list">' +
+                    upstreams
+                        .map((up, idx) => {
+                            const isActive = up.is_active;
+                            const enabled = up.enabled !== false;
+                            const isRateLimited = up.is_rate_limited === true;
+                            let itemClass = '';
+                            if (isActive) itemClass = 'active-upstream';
+                            else if (isRateLimited) itemClass = 'rate-limited';
+
+                            let activeTag;
+                            if (isActive) {
+                                activeTag = '<span class="tag tag-active">#1 活跃</span>';
+                            } else if (up.is_configured_active && isRateLimited) {
+                                activeTag = '<span class="tag tag-priority">已指定（冷却中）</span>';
+                            } else {
+                                activeTag = `<span class="tag tag-priority">#${idx + 1}</span>`;
+                            }
+                            const disabledTag = enabled
+                                ? ''
+                                : '<span class="tag tag-priority">已禁用</span>';
+                            const rateLimitTag = isRateLimited
+                                ? `<span class="tag" style="background:#8b5cf6;color:white">429 冷却 ${up.rate_limit_remaining_str}</span>`
+                                : '';
+                            const proxyText = up.proxy || '直连';
+                            const protocolText = up.protocol || 'openai';
+                            const wsTag = up.ws
+                                ? '<span class="tag" style="background:#58a6ff;color:white">WS</span>'
+                                : '';
+                            const maskedKey = maskApiKey(up.api_key || '');
+                            const modelMapEntries =
+                                up.model_map && typeof up.model_map === 'object' ? Object.entries(up.model_map) : [];
+                            const modelMapTags = modelMapEntries
+                                .map(
+                                    ([k, v]) =>
+                                        `<span class="tag tag-model" style="background:#e0f2fe;color:#0369a1">${k}→${v}</span>`
+                                )
+                                .join(' ');
+                            const editBtn = `<button class="btn btn-secondary btn-small" onclick="event.stopPropagation();openEditUpstreamModal(${idx})">编辑</button>`;
+                            const cloneBtn = `<button class="btn btn-secondary btn-small" onclick="event.stopPropagation();cloneUpstream(${idx})">复制</button>`;
+                            const deleteBtn = `<button class="btn btn-danger btn-small" onclick="event.stopPropagation();deleteUpstream(${idx})">删除</button>`;
+                            const resetRlBtn = isRateLimited
+                                ? `<button class="btn btn-secondary btn-small" onclick="event.stopPropagation();resetUpstreamRateLimit(${idx})">重置状态</button>`
+                                : '';
+                            // 冷却中或未启用的上游不可点击设为活跃（_getActiveIndex 本就会跳过）
+                            const clickable = !isActive && enabled && !isRateLimited;
+
+                            return `
+                        <li class="upstream-item ${itemClass}"
+                            data-index="${idx}"
+                            ${clickable ? `onclick="setActiveUpstream(${idx})"` : ''}
+                            title="${isRateLimited ? '429 冷却中，暂不可设为活跃' : !isActive && enabled ? '点击设为活跃上游' : '当前活跃上游'}">
+                            <div class="upstream-info" style="flex:1">
+                                <h4>${up.name || '未命名'} ${activeTag} ${disabledTag} ${rateLimitTag} ${wsTag}</h4>
+                                <p>${up.base_url || ''}</p>
+                                <p class="upstream-proxy">协议: ${protocolText}</p>
+                                <p class="upstream-proxy">代理: ${proxyText}${up.skip_tls_verify ? ' <span style="color:#f59e0b">（跳过TLS验证）</span>' : ''}</p>
+                                <p style="font-size:0.78rem;margin-top:4px">${modelMapTags ? '映射: ' + modelMapTags : ''}</p>
+                                <span id="testResult${idx}" class="test-result" style="display:none"></span>
+                            </div>
+                            <div class="upstream-actions">
+                                ${resetRlBtn}
+                                ${cloneBtn}
+                                ${editBtn}
+                                ${deleteBtn}
+                            </div>
+                        </li>
+                    `;
+                        })
+                        .join('') +
+                    '</ul>';
+            }
+
+            // ========== 拖拽排序 ==========
+            function toggleUpstreamKeyVisibility(el, fullKey) {
+                if (el.dataset.visible === 'true') {
+                    el.textContent = 'API Key: ' + maskApiKey(fullKey);
+                    el.dataset.visible = 'false';
+                } else {
+                    el.textContent = 'API Key: ' + fullKey;
+                    el.dataset.visible = 'true';
+                }
+            }
+
+            // 切换 WebSocket 选项的显示
+            function toggleWSGroup() {
+                const protocol = document.getElementById('upstreamProtocol').value;
+                const wsGroup = document.getElementById('upstreamWSGroup');
+                wsGroup.style.display = protocol === 'responses' ? 'flex' : 'none';
+                if (protocol !== 'responses') {
+                    document.getElementById('upstreamWS').checked = false;
+                }
+            }
+            document.getElementById('upstreamProtocol').addEventListener('change', toggleWSGroup);
+
+            // 添加上游对话框
+            function openAddUpstreamModal() {
+                editingUpstreamIndex = null;
+                document.getElementById('upstreamModalTitle').textContent = '添加上游';
+                document.getElementById('upstreamModalSubmit').textContent = '添加';
+                document.getElementById('upstreamName').value = '';
+                document.getElementById('upstreamBaseUrl').value = '';
+                document.getElementById('upstreamProtocol').value = 'openai';
+                document.getElementById('upstreamWS').checked = false;
+                toggleWSGroup();
+                document.getElementById('upstreamApiKey').value = '';
+                document.getElementById('upstreamProxy').value = '';
+                document.getElementById('upstreamSkipTls').checked = false;
+                document.getElementById('upstreamModelMap').value = 'sonnet=\nopus=\nhaiku=';
+                document.getElementById('upstreamModal').classList.add('show');
+            }
+
+            // 编辑上游对话框
+            function openEditUpstreamModal(index) {
+                editingUpstreamIndex = index;
+                const up = upstreams[index];
+                if (!up) return;
+                document.getElementById('upstreamModalTitle').textContent = '编辑上游';
+                document.getElementById('upstreamModalSubmit').textContent = '保存';
+                document.getElementById('upstreamName').value = up.name || '';
+                document.getElementById('upstreamBaseUrl').value = up.base_url || '';
+                document.getElementById('upstreamProtocol').value = up.protocol || 'openai';
+                document.getElementById('upstreamWS').checked = up.ws || false;
+                toggleWSGroup();
+                document.getElementById('upstreamApiKey').value = up.api_key_full || '';
+                document.getElementById('upstreamProxy').value = up.proxy || '';
+                document.getElementById('upstreamSkipTls').checked = up.skip_tls_verify === true;
+
+                const modelMap = up.model_map || {};
+                const modelMapText = Object.entries(modelMap)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('\n');
+                document.getElementById('upstreamModelMap').value = modelMapText;
+                document.getElementById('upstreamModal').classList.add('show');
+            }
+
+            function closeUpstreamModal() {
+                document.getElementById('upstreamModal').classList.remove('show');
+                editingUpstreamIndex = null;
+            }
+
+            async function submitUpstream() {
+                const name = document.getElementById('upstreamName').value.trim();
+                const base_url = document.getElementById('upstreamBaseUrl').value.trim();
+                const protocol = document.getElementById('upstreamProtocol').value;
+                const ws = document.getElementById('upstreamWS').checked && protocol === 'responses';
+                const api_key = document.getElementById('upstreamApiKey').value.trim();
+                const proxy = document.getElementById('upstreamProxy').value.trim();
+                const skip_tls_verify = document.getElementById('upstreamSkipTls').checked;
+
+                if (!name || !base_url || !api_key) {
+                    showToast('名称、Base URL 和 API Key 为必填项', 'error');
+                    return;
+                }
+
+                const modelMapText = document.getElementById('upstreamModelMap').value.trim();
+                const model_map = {};
+                if (modelMapText) {
+                    for (const line of modelMapText.split('\n')) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('#')) continue;
+                        const eqIndex = trimmed.indexOf('=');
+                        if (eqIndex > 0) {
+                            const key = trimmed.slice(0, eqIndex).trim();
+                            const value = trimmed.slice(eqIndex + 1).trim();
+                            if (key && value) model_map[key] = value;
+                        }
+                    }
+                }
+
+                const models = Object.values(model_map);
+
+                const submitBtn = document.getElementById('upstreamModalSubmit');
+                submitBtn.classList.add('btn-loading');
+                submitBtn.disabled = true;
+
+                try {
+                    const body = {
+                        name,
+                        base_url,
+                        protocol,
+                        ws: ws || undefined,
+                        api_key,
+                        proxy: proxy || undefined,
+                        skip_tls_verify,
+                        models,
+                        model_map
+                    };
+                    let url, method;
+                    if (editingUpstreamIndex !== null) {
+                        url = `/relayFE/upstreams/${editingUpstreamIndex}`;
+                        method = 'PUT';
+                    } else {
+                        url = `/relayFE/upstreams`;
+                        method = 'POST';
+                    }
+                    const response = await fetch(url, {
+                        method,
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(body)
+                    });
+                    if (response.ok) {
+                        showToast(editingUpstreamIndex !== null ? '上游已更新' : '上游已添加');
+                        closeUpstreamModal();
+                        loadUpstreams();
+                    } else {
+                        const data = await response.json();
+                        throw new Error(data.error || '操作失败');
+                    }
+                } catch (error) {
+                    showToast('操作失败: ' + error.message, 'error');
+                } finally {
+                    submitBtn.classList.remove('btn-loading');
+                    submitBtn.disabled = false;
+                }
+            }
+
+            async function cloneUpstream(index) {
+                const up = upstreams[index];
+                if (!up) {
+                    showToast('无效的上游索引', 'error');
+                    return;
+                }
+                try {
+                    const response = await fetch(`/relayFE/upstreams/${index}/clone`, {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        showToast('上游已复制');
+                        loadUpstreams();
+                    } else {
+                        const err = await response.json();
+                        throw new Error(err.error || '复制失败');
+                    }
+                } catch (error) {
+                    showToast('复制上游失败: ' + error.message, 'error');
+                }
+            }
+
+            async function deleteUpstream(index) {
+                const up = upstreams[index];
+                if (!confirm(`确定要删除上游「${up ? up.name : ''}」吗？`)) return;
+                try {
+                    const response = await fetch(`/relayFE/upstreams/${index}`, {
+                        method: 'DELETE'
+                    });
+                    if (response.ok) {
+                        showToast('上游已删除');
+                        loadUpstreams();
+                    } else {
+                        throw new Error('删除失败');
+                    }
+                } catch (error) {
+                    showToast('删除失败: ' + error.message, 'error');
+                }
+            }
+
+            async function setActiveUpstream(index) {
+                try {
+                    const resp = await fetch(`${API_BASE}/upstreams/set-active`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index})
+                    });
+                    if (resp.ok) {
+                        showToast('已切换活跃上游');
+                        loadUpstreams();
+                    } else {
+                        const data = await resp.json();
+                        showToast(data.error || '设置失败', 'error');
+                    }
+                } catch {
+                    showToast('设置失败', 'error');
+                }
+            }
+
+            async function resetUpstreamRateLimit(index) {
+                try {
+                    const resp = await fetch(`${API_BASE}/upstreams/reset-ratelimit`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index})
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        showToast(data.message || '冷却状态已重置');
+                        loadUpstreams();
+                    } else {
+                        showToast(data.error || '重置失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            async function testAllUpstreams() {
+                const btn = document.getElementById('testAllBtn');
+                if (!btn) return;
+                btn.disabled = true;
+                btn.classList.add('btn-loading');
+                btn.textContent = '测试中...';
+
+                // Clear all previous test results, show "testing" for each
+                upstreams.forEach((_, i) => {
+                    const el = document.getElementById('testResult' + i);
+                    if (el) { el.textContent = '⏳ 测试中...'; el.className = 'test-result'; el.style.display = ''; }
+                });
+
+                let pass = 0, fail = 0;
+                const total = upstreams.length;
+
+                const promises = upstreams.map((_, i) =>
+                    fetch('/relayFE/upstreams/test', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index: i})
+                    })
+                        .then(r => r.json())
+                        .then(data => ({index: i, success: data.success, message: data.message || data.error || '未知错误'}))
+                        .catch(err => ({index: i, success: false, message: err.message}))
+                        .then(r => {
+                            const el = document.getElementById('testResult' + r.index);
+                            if (el) {
+                                if (r.success) {
+                                    el.textContent = '✓ ' + r.message;
+                                    el.className = 'test-result success';
+                                    pass++;
+                                } else {
+                                    el.textContent = '✗ ' + r.message;
+                                    el.className = 'test-result error';
+                                    fail++;
+                                }
+                            }
+                        })
+                );
+
+                try {
+                    await Promise.all(promises);
+                    if (fail === 0) {
+                        showToast(`全部通过 (${pass}/${total})`);
+                    } else {
+                        showToast(`${pass} 通过, ${fail} 失败 (共 ${total})`, fail === total ? 'error' : 'success');
+                    }
+                } catch {
+                    // Individual fetch errors already handled in .catch() above
+                } finally {
+                    btn.disabled = false;
+                    btn.classList.remove('btn-loading');
+                    btn.textContent = '批量测试';
+                }
+            }
+
+            // ========== API Key 管理 ==========
+
+            function toggleApiKeyVisibility() {
+                apiKeyVisible = !apiKeyVisible;
+                const textEl = document.getElementById('apiKeyText');
+                const btn = document.getElementById('toggleKeyBtn');
+                if (apiKeyVisible && apiKeyPlain) {
+                    textEl.textContent = apiKeyPlain;
+                    btn.textContent = '🙈';
+                } else {
+                    textEl.textContent = apiKeyMasked;
+                    btn.textContent = '👁';
+                    apiKeyVisible = false;
+                }
+            }
+
+            async function copyApiKey() {
+                const keyToCopy = apiKeyPlain || apiKeyMasked;
+                if (!keyToCopy || keyToCopy === '****') {
+                    showToast('无可复制的 API Key', 'error');
+                    return;
+                }
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(keyToCopy);
+                    } else {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = keyToCopy;
+                        textarea.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                    }
+                    const btn = document.getElementById('copyKeyBtn');
+                    btn.textContent = '✓';
+                    btn.classList.add('copy-success');
+                    showToast('API Key 已复制');
+                    setTimeout(() => {
+                        btn.textContent = '📋';
+                        btn.classList.remove('copy-success');
+                    }, 2000);
+                } catch (error) {
+                    showToast('复制失败', 'error');
+                }
+            }
+
+            async function resetApiKey() {
+                if (!confirm('重置将同时影响所有端点（Copilot/CodeBuddy/Relay），旧 Key 将立即失效，确定？')) return;
+                try {
+                    const response = await fetch(`/relayFE/regenerate-key`, {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    if (data.api_key) {
+                        apiKeyPlain = data.api_key;
+                        const body = apiKeyPlain.slice('sk-'.length);
+                        apiKeyMasked = 'sk-' + body.slice(0, 8) + '****' + body.slice(-4);
+                        apiKeyVisible = true;
+                        document.getElementById('apiKeyText').textContent = apiKeyPlain;
+                        document.getElementById('toggleKeyBtn').textContent = '🙈';
+                        showToast('API Key 已重置，请妥善保存');
+                    } else {
+                        throw new Error(data.error || '重置失败');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            // ========== 窗口大小调整 ==========
+
+            window.addEventListener('resize', function () {
+                if (apiCallsChartInstance) apiCallsChartInstance.resize();
+                if (tokensChartInstance) tokensChartInstance.resize();
+            });
+
+            // ========== 初始化 ==========
+
+            renderPage();
+            loadMyTenant();
+        </script>
+    </body>
+</html>

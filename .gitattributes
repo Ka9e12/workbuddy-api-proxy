@@ -1,0 +1,12 @@
+# 换行统一交给 Git 转换，内容本身统一 UTF-8。
+#
+# .bat 必须只含 ASCII 字节：cmd.exe 解析 UTF-8 多字节序列时会错拆行
+# （"中文" 被切成两条命令），表现成 "'e' 不是内部或外部命令" 这种怪错误。
+# 批处理里要显示中文，只能退回 GBK，反而让仓库出现两种编码——
+# 所以这两个 .bat 的提示文字用英文。服务启动后的中文日志由 Node 打印，正常。
+#
+# .ps1 必须带 UTF-8 BOM：Windows PowerShell 5.1 对无 BOM 的文件按系统 ANSI
+# 代码页解码，中文注释和 Write-Host 会直接乱码。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

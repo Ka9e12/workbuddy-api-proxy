@@ -1,0 +1,1953 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>CodeBuddy 管理面板</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #f5f7fa;
+                color: #333;
+                line-height: 1.6;
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+            header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 20px 30px;
+                margin-bottom: 30px;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            header h1 {
+                font-size: 1.5rem;
+            }
+            .header-right {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+            .card {
+                background: white;
+                border-radius: 12px;
+                padding: 24px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            }
+            .card h2 {
+                color: #667eea;
+                margin-bottom: 16px;
+                font-size: 1.15rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                font-size: 0.9rem;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                font-weight: 500;
+            }
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .btn-primary:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            }
+            .btn-danger {
+                background: #ef4444;
+                color: white;
+            }
+            .btn-danger:hover {
+                background: #dc2626;
+            }
+            .btn-secondary {
+                background: #f3f4f6;
+                color: #374151;
+            }
+            .btn-secondary:hover {
+                background: #e5e7eb;
+            }
+            .btn-warning {
+                background: #f59e0b;
+                color: white;
+            }
+            .btn-warning:hover {
+                background: #d97706;
+            }
+            .btn:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+            .btn-small {
+                padding: 6px 12px;
+                font-size: 0.8rem;
+                white-space: nowrap;
+                line-height: 1.4;
+            }
+            .auth-box {
+                background: #f8fafc;
+                border: 2px dashed #cbd5e1;
+                border-radius: 12px;
+                padding: 30px;
+                text-align: center;
+            }
+            .auth-box.active {
+                border-color: #667eea;
+                background: #eef2ff;
+            }
+            .auth-link {
+                display: inline-block;
+                background: #667eea;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 8px;
+                text-decoration: none;
+                margin: 10px 0;
+                word-break: break-all;
+                font-size: 0.85rem;
+            }
+            .auth-link:hover {
+                background: #5a67d8;
+            }
+            .credential-list {
+                list-style: none;
+            }
+            .credential-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 14px 16px;
+                background: #f8fafc;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                border-left: 4px solid #667eea;
+            }
+            .credential-item.expired {
+                border-left-color: #ef4444;
+                opacity: 0.7;
+            }
+            .credential-item.disabled {
+                border-left-color: #f59e0b;
+                opacity: 0.6;
+            }
+            .credential-item.domain-blocked {
+                border-left-color: #dc2626;
+                opacity: 0.5;
+                background: repeating-linear-gradient(
+                    -45deg,
+                    transparent,
+                    transparent 8px,
+                    rgba(220, 38, 38, 0.06) 8px,
+                    rgba(220, 38, 38, 0.06) 16px
+                );
+            }
+            .credential-item.active-credential {
+                border-left-color: #10b981;
+                background: #f0fdf4;
+            }
+            .credential-item.rate-limited {
+                border-left-color: #8b5cf6;
+            }
+            .badge-ratelimit {
+                background: #8b5cf6;
+                color: #fff;
+                font-size: 0.7rem;
+                padding: 2px 8px;
+                border-radius: 10px;
+                margin-left: 8px;
+            }
+            .badge-modellock {
+                background: #f59e0b;
+                color: #fff;
+                font-size: 0.7rem;
+                padding: 2px 8px;
+                border-radius: 10px;
+                margin-left: 6px;
+            }
+            .credential-info h4 {
+                color: #1f2937;
+                margin-bottom: 2px;
+                font-size: 0.95rem;
+            }
+            .credential-info p {
+                color: #6b7280;
+                font-size: 0.8rem;
+            }
+            .loading {
+                display: inline-block;
+                width: 18px;
+                height: 18px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                0% {
+                    transform: rotate(0deg);
+                }
+                100% {
+                    transform: rotate(360deg);
+                }
+            }
+            .toast {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 14px 22px;
+                border-radius: 8px;
+                color: white;
+                font-weight: 500;
+                transform: translateY(100px);
+                opacity: 0;
+                transition: all 0.3s ease;
+                z-index: 1000;
+            }
+            .toast.show {
+                transform: translateY(0);
+                opacity: 1;
+            }
+            .toast.success {
+                background: #10b981;
+            }
+            .toast.error {
+                background: #ef4444;
+            }
+            .empty-state {
+                text-align: center;
+                padding: 30px;
+                color: #9ca3af;
+            }
+            .config-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 12px 0;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .config-row:last-child {
+                border-bottom: none;
+            }
+            .config-label {
+                font-weight: 500;
+                color: #374151;
+            }
+            .config-label p {
+                color: #6b7280;
+                font-size: 0.8rem;
+                font-weight: normal;
+                margin-top: 2px;
+            }
+            .config-control {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .api-key-display {
+                background: #f1f5f9;
+                padding: 14px 18px;
+                border-radius: 8px;
+                font-family: monospace;
+                font-size: 0.9rem;
+                word-break: break-all;
+                border: 2px solid #667eea;
+                color: #374151;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .api-key-text {
+                flex: 1;
+                word-break: break-all;
+            }
+            .api-key-actions {
+                display: flex;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .btn-icon {
+                padding: 6px 10px;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                transition: all 0.2s;
+                background: #e5e7eb;
+                color: #374151;
+            }
+            .btn-icon:hover {
+                background: #d1d5db;
+            }
+            .btn-icon.copy-success {
+                background: #10b981;
+                color: white;
+            }
+            .cred-count-badge {
+                background: #667eea;
+                color: white;
+                font-size: 0.75rem;
+                padding: 2px 10px;
+                border-radius: 12px;
+                margin-left: 8px;
+                vertical-align: middle;
+                font-weight: 600;
+            }
+            .cred-count-badge.zero {
+                background: #ef4444;
+            }
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(6, 1fr);
+                gap: 12px;
+            }
+            .stat-item {
+                background: #f8fafc;
+                border-radius: 8px;
+                padding: 16px;
+                text-align: center;
+            }
+            .stat-value {
+                font-size: 1.5rem;
+                font-weight: 700;
+                color: #667eea;
+                line-height: 1.2;
+            }
+            .stat-label {
+                font-size: 0.85rem;
+                color: #6b7280;
+                margin-top: 6px;
+            }
+            .usage-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+            .usage-card-header h2 {
+                margin-bottom: 0;
+            }
+            .month-select {
+                padding: 6px 12px;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                font-size: 0.85rem;
+                color: #374151;
+                background: white;
+                cursor: pointer;
+                outline: none;
+            }
+            .month-select:focus {
+                border-color: #667eea;
+            }
+            .chart-container {
+                width: 100%;
+                height: 280px;
+                margin-top: 16px;
+            }
+
+            /* 使用指南样式 */
+            .guide-steps {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+            .guide-step {
+                display: flex;
+                gap: 14px;
+                align-items: flex-start;
+            }
+            .guide-step-num {
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                font-weight: 700;
+                font-size: 0.85rem;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
+            .guide-step-body {
+                flex: 1;
+            }
+            .guide-step-title {
+                font-weight: 600;
+                color: #1f2937;
+                margin-bottom: 4px;
+                font-size: 0.95rem;
+            }
+            .guide-step-desc {
+                font-size: 0.85rem;
+                color: #6b7280;
+                line-height: 1.5;
+            }
+            .guide-step-desc code {
+                background: #f1f5f9;
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-size: 0.82rem;
+                color: #7c3aed;
+            }
+            .guide-model-table {
+                width: 100%;
+                table-layout: fixed;
+                border-collapse: collapse;
+                margin-top: 6px;
+                font-size: 0.82rem;
+            }
+            .guide-model-table th {
+                background: #f1f5f9;
+                padding: 6px 10px;
+                text-align: left;
+                border-bottom: 1px solid #e2e8f0;
+                font-weight: 600;
+                color: #374151;
+            }
+            .guide-model-table th:nth-child(1) {
+                width: 42%;
+            }
+            .guide-model-table th:nth-child(2) {
+                width: 34%;
+            }
+            .guide-model-table th:nth-last-child(-n+2) {
+                text-align: center;
+                width: 12%;
+            }
+            .guide-model-table td {
+                padding: 5px 10px;
+                border-bottom: 1px solid #f1f5f9;
+                color: #4b5563;
+            }
+            .guide-model-table td:nth-last-child(-n+2) {
+                text-align: center;
+            }
+            .guide-model-table tbody tr:nth-child(even) {
+                background: #f8fafc;
+            }
+            .guide-model-table td code {
+                font-size: 0.78rem;
+            }
+            .guide-code-block {
+                position: relative;
+                background: #1e293b;
+                border-radius: 8px;
+                margin-top: 8px;
+                overflow: hidden;
+            }
+            .guide-code-block pre {
+                margin: 0;
+                padding: 14px 18px;
+                padding-right: 48px;
+                color: #e2e8f0;
+                font-size: 0.82rem;
+                font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+                line-height: 1.6;
+                overflow-x: auto;
+                white-space: pre;
+            }
+            .guide-copy-btn {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                background: rgba(255, 255, 255, 0.1);
+                color: #e2e8f0;
+                border: none;
+            }
+            .guide-copy-btn:hover {
+                background: rgba(255, 255, 255, 0.2);
+            }
+        </style>
+        <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>CodeBuddy 管理面板</h1>
+                <div class="header-right"></div>
+            </header>
+
+            <div id="mainContent">
+                <div class="empty-state">
+                    <div class="loading"></div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="toast" class="toast"></div>
+
+        <script>
+            const API_BASE = '/codebuddyFE';
+            let currentAuthState = null;
+            let pollInterval = null;
+            let manualSelectedIndex = null;
+            let apiKeyVisible = false;
+            let apiKeyPlain = '';
+            let apiKeyMasked = '';
+            let currentMonth = '';
+            let apiCallsChartInstance = null;
+            let tokensChartInstance = null;
+            let creditChartInstance = null;
+
+            function showToast(message, type = 'success') {
+                const toast = document.getElementById('toast');
+                toast.textContent = message;
+                toast.className = 'toast ' + type;
+                toast.classList.add('show');
+                const duration = type === 'error' ? 8000 : 3000;
+                setTimeout(() => toast.classList.remove('show'), duration);
+            }
+
+            async function loadMyTenant() {
+                try {
+                    const response = await fetch(API_BASE + '/status');
+                    const data = await response.json();
+                    manualSelectedIndex = data.manualSelectedIndex;
+
+                    // Render the page with status data
+                    renderTenantPage({
+                        apiKeyPrefix: data.apiKeyPrefix,
+                        apiKeyPlain: data.apiKeyPlain,
+                        credentialCount: data.credentialCount,
+                        hasCredentials: data.hasCredentials,
+                        customApiCallCount: data.usage?.custom_api_call_count || 0,
+                        customInputTokens: data.usage?.custom_input_tokens || 0,
+                        customOutputTokens: data.usage?.custom_output_tokens || 0,
+                        customCacheHitTokens: data.usage?.custom_cache_hit_tokens || 0,
+                        customCredit: data.usage?.custom_credit || 0,
+                        cluster: data.cluster
+                    });
+
+                    loadCredentials();
+                    refreshBilling();
+                    loadModels();
+                    startStatsAutoRefresh();
+                    currentMonth = getCurrentMonth();
+                    loadAvailableMonths();
+                    await loadDailyChartData();
+                } catch (error) {
+                    showToast('加载信息失败: ' + error.message, 'error');
+                }
+            }
+
+            function formatStat(n) {
+                if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+                if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+                return new Intl.NumberFormat('zh-CN').format(n);
+            }
+
+            function formatNumber(n) {
+                return new Intl.NumberFormat('zh-CN').format(n);
+            }
+
+            function getCurrentMonth() {
+                const now = new Date();
+                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            }
+
+            function loadAvailableMonths() {
+                const select = document.getElementById('monthSelect');
+                if (!select) return;
+                const now = new Date();
+                const months = [];
+                for (let i = 0; i < 3; i++) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    months.push(key);
+                }
+                select.innerHTML = months
+                    .map((m) => {
+                        const [y, mo] = m.split('-');
+                        return `<option value="${m}"${m === currentMonth ? ' selected' : ''}>${y} - ${parseInt(mo)}月</option>`;
+                    })
+                    .join('');
+            }
+
+            async function onMonthChange() {
+                const select = document.getElementById('monthSelect');
+                if (select) {
+                    currentMonth = select.value;
+                }
+                await loadDailyChartData();
+            }
+
+            async function loadDailyChartData() {
+                if (!currentMonth) return;
+                try {
+                    const response = await fetch(
+                        `/codebuddyFE/stats/daily?month=${currentMonth}`
+                    );
+                    const result = await response.json();
+                    renderCharts(result.data || {}, currentMonth);
+                } catch (error) {
+                    console.error('加载每日数据失败:', error);
+                }
+            }
+
+            function getDaysInMonth(monthKey) {
+                const [year, month] = monthKey.split('-').map(Number);
+                return new Date(year, month, 0).getDate();
+            }
+
+            function renderCharts(dailyData, monthKey) {
+                let daysInMonth = getDaysInMonth(monthKey);
+                const now = new Date();
+                const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                if (monthKey === curMonth) {
+                    daysInMonth = Math.min(daysInMonth, now.getDate());
+                }
+                const dates = [];
+                const apiCallsData = [];
+                const inputTokensData = [];
+                const outputTokensData = [];
+                const cacheHitTokensData = [];
+                const creditData = [];
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dayKey = String(d).padStart(2, '0');
+                    const dayData = dailyData[dayKey] || {
+                        api_calls: 0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_hit_tokens: 0,
+                        credit: 0
+                    };
+                    dates.push(d);
+                    apiCallsData.push(dayData.api_calls);
+                    inputTokensData.push(dayData.input_tokens);
+                    outputTokensData.push(dayData.output_tokens);
+                    cacheHitTokensData.push(dayData.cache_hit_tokens || 0);
+                    creditData.push(dayData.credit || 0);
+                }
+
+                // 按月份聚合更新统计卡片
+                const totalApiCalls = apiCallsData.reduce((s, v) => s + v, 0);
+                const totalInputTokens = inputTokensData.reduce((s, v) => s + v, 0);
+                const totalOutputTokens = outputTokensData.reduce((s, v) => s + v, 0);
+                const totalTokens = totalInputTokens + totalOutputTokens;
+                const totalCacheHitTokens = cacheHitTokensData.reduce((s, v) => s + v, 0);
+                const totalCredit = creditData.reduce((s, v) => s + v, 0);
+                const callEl = document.getElementById('apiCallCount');
+                if (callEl) {
+                    callEl.textContent = formatStat(totalApiCalls);
+                    callEl.title = new Intl.NumberFormat('zh-CN').format(totalApiCalls);
+                }
+                const inEl = document.getElementById('inputTokensCount');
+                if (inEl) {
+                    inEl.textContent = formatStat(totalInputTokens);
+                    inEl.title = new Intl.NumberFormat('zh-CN').format(totalInputTokens);
+                }
+                const outEl = document.getElementById('outputTokensCount');
+                if (outEl) {
+                    outEl.textContent = formatStat(totalOutputTokens);
+                    outEl.title = new Intl.NumberFormat('zh-CN').format(totalOutputTokens);
+                }
+                const cacheHitEl = document.getElementById('cacheHitTokensCount');
+                if (cacheHitEl) {
+                    cacheHitEl.textContent = formatStat(totalCacheHitTokens);
+                    cacheHitEl.title = new Intl.NumberFormat('zh-CN').format(totalCacheHitTokens);
+                }
+                const cacheRateEl = document.getElementById('cacheHitRate');
+                if (cacheRateEl) {
+                    const cacheRate =
+                        totalInputTokens > 0 ? Math.min(100, Math.round((totalCacheHitTokens / totalInputTokens) * 100)) : 0;
+                    cacheRateEl.textContent = cacheRate + '%';
+                    cacheRateEl.title = cacheRate + '%';
+                }
+                const creditEl = document.getElementById('creditCount');
+                if (creditEl) {
+                    creditEl.textContent = totalCredit.toFixed(2);
+                    creditEl.title = totalCredit.toFixed(2);
+                }
+
+                // 折线图 - API请求次数
+                const apiCallsEl = document.getElementById('apiCallsChart');
+                if (apiCallsEl) {
+                    if (!apiCallsChartInstance) {
+                        apiCallsChartInstance = echarts.init(apiCallsEl);
+                    }
+                    apiCallsChartInstance.setOption(
+                        {
+                            title: {text: 'API 请求次数', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                formatter: function (params) {
+                                    const p = params[0];
+                                    const day = String(p.dataIndex + 1).padStart(2, '0');
+                                    return `<b>${monthKey}-${day}</b><br/>请求次数 ${p.value}`;
+                                }
+                            },
+                            grid: {left: '50px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: '次', axisLabel: {fontSize: 11}, splitNumber: 2},
+                            series: [
+                                {
+                                    type: 'line',
+                                    data: apiCallsData,
+                                    smooth: true,
+                                    showSymbol: false,
+                                    emphasis: {focus: 'series', itemStyle: {color: '#667eea'}},
+                                    areaStyle: {opacity: 0.15},
+                                    lineStyle: {color: '#667eea', width: 2},
+                                    itemStyle: {color: '#667eea'}
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+
+                // 柱状图 - Tokens（堆叠：缓存命中/未命中/输出）
+                const tokensEl = document.getElementById('tokensChart');
+                if (tokensEl) {
+                    if (!tokensChartInstance) {
+                        tokensChartInstance = echarts.init(tokensEl);
+                    }
+                    tokensChartInstance.setOption(
+                        {
+                            title: {text: 'Tokens 使用量', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                extraCssText: 'min-width: 300px',
+                                formatter: function (params) {
+                                    const day = String(params[0].dataIndex + 1).padStart(2, '0');
+                                    const barColors = ['#a0dcfd', '#60b3fe', '#0c70f3'];
+                                    const totalAll = params.reduce((s, p) => s + p.value, 0);
+                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(totalAll)} tokens</b></div>`;
+                                    params.forEach((p, i) => {
+                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
+                                    });
+                                    return tip;
+                                }
+                            },
+                            legend: {
+                                data: ['输入(命中缓存)', '输入(未命中缓存)', '输出'],
+                                top: '30px',
+                                right: '0',
+                                textStyle: {fontSize: 12}
+                            },
+                            grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: 'Tokens', axisLabel: {fontSize: 11}, splitNumber: 1},
+                            series: [
+                                {
+                                    name: '输入(命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: cacheHitTokensData,
+                                    itemStyle: {color: '#a0dcfd'}
+                                },
+                                {
+                                    name: '输入(未命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: inputTokensData.map((v, i) => v - (cacheHitTokensData[i] || 0)),
+                                    itemStyle: {color: '#60b3fe'}
+                                },
+                                {
+                                    name: '输出',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: outputTokensData,
+                                    itemStyle: {color: '#0c70f3'}
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+
+                // 柱状图 - 日 CodeBuddy 积分
+                const creditEl2 = document.getElementById('creditChart');
+                if (creditEl2) {
+                    if (!creditChartInstance) {
+                        creditChartInstance = echarts.init(creditEl2);
+                    }
+                    creditChartInstance.setOption(
+                        {
+                            title: {text: '日 CodeBuddy 积分', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                formatter: function (params) {
+                                    const p = params[0];
+                                    const day = String(p.dataIndex + 1).padStart(2, '0');
+                                    return `<b>${monthKey}-${day}</b><br/>CodeBuddy 积分 ${p.value.toFixed(2)}`;
+                                }
+                            },
+                            grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: 'CodeBuddy 积分', axisLabel: {fontSize: 11}, splitNumber: 3},
+                            series: [
+                                {
+                                    type: 'bar',
+                                    data: creditData,
+                                    itemStyle: {
+                                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                            {offset: 0, color: '#f59e0b'},
+                                            {offset: 1, color: '#f97316'}
+                                        ])
+                                    }
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+            }
+
+            async function resetCustomStats() {
+                if (!confirm('确定要重置自定义统计数据吗？此操作不可撤销。')) return;
+                try {
+                    const response = await fetch(`/codebuddyFE/stats/custom-reset`, {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        showToast('自定义统计数据已重置');
+                        refreshApiStats();
+                    } else {
+                        throw new Error('重置失败');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            async function reloadAndRefreshStats() {
+                try {
+                    await fetch(`/codebuddyFE/stats/refresh`, {method: 'POST'});
+                    await Promise.all([refreshApiStats(), loadDailyChartData()]);
+                    showToast('数据已刷新');
+                } catch (error) {
+                    showToast('刷新失败: ' + error.message, 'error');
+                }
+            }
+
+            async function refreshApiStats() {
+                try {
+                    const response = await fetch('/codebuddyFE/status');
+                    const data = await response.json();
+                    const cCallEl = document.getElementById('customApiCallCount');
+                    if (cCallEl) {
+                        cCallEl.textContent = formatStat(data.usage?.custom_api_call_count || 0);
+                        cCallEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_api_call_count || 0);
+                    }
+                    const cInEl = document.getElementById('customInputTokensCount');
+                    if (cInEl) {
+                        cInEl.textContent = formatStat(data.usage?.custom_input_tokens || 0);
+                        cInEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_input_tokens || 0);
+                    }
+                    const cOutEl = document.getElementById('customOutputTokensCount');
+                    if (cOutEl) {
+                        cOutEl.textContent = formatStat(data.usage?.custom_output_tokens || 0);
+                        cOutEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_output_tokens || 0);
+                    }
+                    const cCacheHitEl = document.getElementById('customCacheHitTokensCount');
+                    if (cCacheHitEl) {
+                        cCacheHitEl.textContent = formatStat(data.usage?.custom_cache_hit_tokens || 0);
+                        cCacheHitEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_cache_hit_tokens || 0);
+                    }
+                    const cCacheRateEl = document.getElementById('customCacheHitRate');
+                    if (cCacheRateEl) {
+                        const cacheRate =
+                            (data.usage?.custom_input_tokens || 0) > 0
+                                ? Math.min(100, Math.round(((data.usage?.custom_cache_hit_tokens || 0) / data.usage.custom_input_tokens) * 100))
+                                : 0;
+                        cCacheRateEl.textContent = cacheRate + '%';
+                        cCacheRateEl.title = cacheRate + '%';
+                    }
+                    const cCreditEl = document.getElementById('customCreditCount');
+                    if (cCreditEl) {
+                        cCreditEl.textContent = (data.usage?.custom_credit || 0).toFixed(2);
+                        cCreditEl.title = (data.usage?.custom_credit || 0).toFixed(2);
+                    }
+                } catch {}
+            }
+
+            function startStatsAutoRefresh() {
+                refreshApiStats();
+                setInterval(() => {
+                    refreshApiStats();
+                    if (currentMonth) loadDailyChartData();
+                }, 30000);
+            }
+
+            function renderTenantPage(data) {
+                apiKeyMasked = data.apiKeyPrefix || '****';
+                apiKeyPlain = data.apiKeyPlain || '';
+                apiKeyVisible = false;
+                document.getElementById('mainContent').innerHTML = `
+                <div class="card">
+                    <h2>添加凭证</h2>
+                    <div class="config-row" style="margin-bottom: 16px;">
+                        <div class="config-label">
+                            上游服务
+                            <p>选择认证的上游 CodeBuddy 服务地址</p>
+                        </div>
+                        <div class="config-control">
+                            <select id="baseUrlSelect" style="width: 240px; text-align: left; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem;">
+                                {{baseUrlOptions}}
+                            </select>
+                        </div>
+                    </div>
+                    <div id="authBox" class="auth-box">
+                        <p>点击下方按钮开始 CodeBuddy OAuth2 认证流程</p>
+                        <button id="startAuthBtn" class="btn btn-primary" style="margin-top: 16px;">
+                            开始认证
+                        </button>
+                        <div id="authLinkContainer" style="display: none; margin-top: 20px;">
+                            <p style="margin-bottom: 10px;">请访问以下链接完成登录：</p>
+                            <a id="authLink" href="#" target="_blank" class="auth-link"></a>
+                            <p style="margin-top: 10px; color: #6b7280; font-size: 0.85rem;">
+                                正在等待认证... <span class="loading"></span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>凭证列表 <span id="credCountBadge" class="cred-count-badge">${data.credentialCount || 0}</span>${
+                        data.cluster && data.cluster.mode
+                            ? '<span style="font-size:0.7rem;color:#8b949e;font-weight:400;margin-left:8px;">冷却状态为当前实例视角（端口 ' +
+                              (data.cluster.port || '?') +
+                              '），重置会同步到全部实例</span>'
+                            : ''
+                    }</h2>
+                    <div id="credentialsList">
+                        <div class="empty-state"><p>加载中...</p></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <h2 style="margin-bottom:0;">成长中心 <span style="font-size:0.7rem;color:#8b949e;font-weight:400;">连登 · 猫猫旅行 · 抽奖（仅国内个人站）</span></h2>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <button class="btn btn-primary btn-small" onclick="refreshGrowth()">刷新状态</button>
+                        </div>
+                    </div>
+                    <div id="growthList">
+                        <div class="empty-state"><p>点击「刷新状态」查询成长中心</p></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <h2>积分与签到</h2>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <label style="font-size:0.85rem;color:#6b7280;display:flex;align-items:center;gap:4px;" title="默认开启：每次启动项目时自动签到并执行成长日常。取消勾选可关闭。">
+                                <input type="checkbox" id="startupCheckinToggle" onchange="toggleStartupCheckin()" style="margin:0;"> 启动时自动签到与成长日常
+                            </label>
+                            <button class="btn btn-primary btn-small" onclick="refreshBilling()">刷新积分</button>
+                            <button class="btn btn-secondary btn-small" onclick="batchCheckin(this)">批量签到</button>
+                        </div>
+                    </div>
+                    <div id="billingList">
+                        <div class="empty-state"><p>暂无凭证，添加后可查询积分与签到</p></div>
+                    </div>
+                    <div id="scheduleStatus" style="margin-top:10px;font-size:0.8rem;color:#6b7280;"></div>
+                </div>
+
+                <div class="card">
+                    <h2>API Key <span style="font-size:0.7em;color:#58a6ff;font-weight:400;">所有端点共用</span></h2>
+                    <div class="api-key-display">
+                        <span id="apiKeyText" class="api-key-text">${apiKeyMasked}</span>
+                        <div class="api-key-actions">
+                            <button class="btn-icon" onclick="toggleApiKeyVisibility()" id="toggleKeyBtn" title="显示/隐藏">👁</button>
+                            <button class="btn-icon" onclick="copyApiKey()" id="copyKeyBtn" title="复制">📋</button>
+                            <button class="btn-icon" onclick="resetApiKey()" id="resetKeyBtn" title="重置">🔄</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>使用指南</h2>
+                    <div class="guide-steps">
+                        <div class="guide-step">
+                            <div class="guide-step-num">1</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">添加凭证</div>
+                                <div class="guide-step-desc">选好域名后点击「开始认证」，在 CodeBuddy 页面完成认证后，返回本页面（<code>${window.location.href}</code>）</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">2</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 Anthropic 接口协议工具</div>
+                                <div class="guide-step-desc">如 Claude Code、Claude Desktop、Codex 等，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code> 等变体。</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideConfig()" title="复制">📋</button>
+                                    <pre id="guideConfigCode"></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">3</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI 接口协议工具</div>
+                                <div class="guide-step-desc">如 Cursor、Continue、Cline 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideOpenAIUrl()" title="复制">📋</button>
+                                    <pre id="guideOpenAIUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">4</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI Responses API 工具</div>
+                                <div class="guide-step-desc">如 Cherry Studio 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideResponsesUrl()" title="复制">📋</button>
+                                    <pre id="guideResponsesUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">5</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">可用模型</div>
+                                <div class="guide-step-desc">实时拉取上游最新模型列表，按厂商分组，标清倍率（x 值越大积分消耗越快）。</div>
+                                <div id="modelsContainer" style="margin-top: 12px;">
+                                    <div class="empty-state"><p>加载中... <span class="loading"></span></p></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="usage-card-header">
+                        <h2>使用统计</h2>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <button class="btn-icon" onclick="reloadAndRefreshStats()" title="刷新">🔄</button>
+                            <select id="monthSelect" class="month-select" onchange="onMonthChange()"></select>
+                        </div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="apiCallCount" title="0">0</div>
+                            <div class="stat-label">API 调用次数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="inputTokensCount" title="0">0</div>
+                            <div class="stat-label">输入 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="outputTokensCount" title="0">0</div>
+                            <div class="stat-label">输出 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitRate" title="0">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="creditCount" title="0">0</div>
+                            <div class="stat-label">CodeBuddy 积分</div>
+                        </div>
+                    </div>
+                    <div id="tokensChart" class="chart-container"></div>
+                    <div id="creditChart" class="chart-container"></div>
+                </div>
+
+                <div class="card">
+                    <h2>自定义统计</h2>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="customApiCallCount" title="${new Intl.NumberFormat('zh-CN').format(data.customApiCallCount || 0)}">${formatStat(data.customApiCallCount || 0)}</div>
+                            <div class="stat-label">API 调用次数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customInputTokensCount" title="${new Intl.NumberFormat('zh-CN').format(data.customInputTokens || 0)}">${formatStat(data.customInputTokens || 0)}</div>
+                            <div class="stat-label">输入 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customOutputTokensCount" title="${new Intl.NumberFormat('zh-CN').format(data.customOutputTokens || 0)}">${formatStat(data.customOutputTokens || 0)}</div>
+                            <div class="stat-label">输出 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitTokensCount" title="${new Intl.NumberFormat('zh-CN').format(data.customCacheHitTokens || 0)}">${formatStat(data.customCacheHitTokens || 0)}</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitRate" title="0%">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCreditCount" title="${(data.customCredit || 0).toFixed(2)}">${(data.customCredit || 0).toFixed(2)}</div>
+                            <div class="stat-label">CodeBuddy 积分</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px;">
+                        <button class="btn btn-primary btn-small" onclick="reloadAndRefreshStats()">刷新</button>
+                        <button class="btn btn-primary btn-small" onclick="resetCustomStats()">重置</button>
+                    </div>
+                </div>
+            `;
+
+                document.getElementById('startAuthBtn').addEventListener('click', startAuth);
+                document.getElementById('baseUrlSelect').addEventListener('change', resetAuthUI);
+                updateGuideConfig();
+            }
+
+            async function startAuth() {
+                const btn = document.getElementById('startAuthBtn');
+                const container = document.getElementById('authLinkContainer');
+                const link = document.getElementById('authLink');
+                const box = document.getElementById('authBox');
+
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading"></span> 启动中...';
+
+                try {
+                    const baseUrl = document.getElementById('baseUrlSelect').value;
+                    const response = await fetch(
+                        `/codebuddyFE/auth/start?base_url=${encodeURIComponent(baseUrl)}`
+                    );
+                    const data = await response.json();
+                    if (data.success) {
+                        currentAuthState = data.auth_state;
+                        box.classList.add('active');
+                        container.style.display = 'block';
+                        link.href = data.verification_uri_complete;
+                        link.textContent = data.verification_uri_complete;
+                        window.open(data.verification_uri_complete, '_blank');
+                        startPolling();
+                    } else {
+                        throw new Error(data.message || '启动失败');
+                    }
+                } catch (error) {
+                    let errorMsg = '启动认证失败: ' + error.message;
+                    if (
+                        error.message.includes('certificate') ||
+                        error.message.includes('TLS') ||
+                        error.message.includes('SSL')
+                    ) {
+                        errorMsg += '\\n\\n解决方案：设置环境变量 NODE_TLS_REJECT_UNAUTHORIZED=0 后重启服务';
+                    }
+                    showToast(errorMsg, 'error');
+                    btn.disabled = false;
+                    btn.textContent = '开始认证';
+                }
+            }
+
+            function startPolling() {
+                if (pollInterval) clearInterval(pollInterval);
+                pollInterval = setInterval(async () => {
+                    try {
+                        const response = await fetch('/codebuddyFE/auth/poll', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({auth_state: currentAuthState})
+                        });
+                        const data = await response.json();
+                        if (data.status === 'success') {
+                            clearInterval(pollInterval);
+                            showToast('认证成功！');
+                            resetAuthUI();
+                            loadCredentials();
+                        } else if (data.status === 'error') {
+                            clearInterval(pollInterval);
+                            showToast(data.message, 'error');
+                            resetAuthUI();
+                        }
+                    } catch (error) {
+                        console.error('轮询失败:', error);
+                    }
+                }, 5000);
+            }
+
+            function resetAuthUI() {
+                const btn = document.getElementById('startAuthBtn');
+                const container = document.getElementById('authLinkContainer');
+                const box = document.getElementById('authBox');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '开始认证';
+                }
+                if (container) container.style.display = 'none';
+                if (box) box.classList.remove('active');
+                currentAuthState = null;
+            }
+
+            async function loadCredentials() {
+                try {
+                    const response = await fetch(`/codebuddyFE/credentials`);
+                    const data = await response.json();
+                    const list = document.getElementById('credentialsList');
+                    const credCount = data.credentials ? data.credentials.length : 0;
+                    const badge = document.getElementById('credCountBadge');
+                    if (badge) {
+                        badge.textContent = credCount;
+                        badge.className = 'cred-count-badge' + (credCount === 0 ? ' zero' : '');
+                    }
+                    if (!data.credentials || data.credentials.length === 0) {
+                        list.innerHTML = '<div class="empty-state"><p>暂无凭证，请先添加</p></div>';
+                        return;
+                    }
+                    list.innerHTML =
+                        '<ul class="credential-list">' +
+                        data.credentials
+                            .map((cred) => {
+                                const shortUrl = cred.baseUrl ? new URL(cred.baseUrl).host : 'unknown';
+                                const statusParts = [];
+                                const reasonLabel = {
+                                    'balance': '余额不足',
+                                    'soft': '限流',
+                                    'breaker': '熔断',
+                                    'not_found': '上游404'
+                                };
+                                if (cred.isDomainBlocked) {
+                                    statusParts.push('域名已废弃');
+                                } else {
+                                    if (cred.isDisabled) statusParts.push('已禁用');
+                                    else if (cred.isExpired) statusParts.push('已过期');
+                                    else if (cred.isRateLimited)
+                                        statusParts.push(
+                                            '冷却中[' +
+                                                (reasonLabel[cred.rateLimitReason] || '限流') +
+                                                ']（' +
+                                                cred.rateLimitRemainingStr +
+                                                ' 后恢复）'
+                                        );
+                                    else statusParts.push('有效');
+                                    statusParts.push('剩余: ' + cred.timeRemainingStr);
+                                    // 窗口内连续失败计数（未达阈值；达阈值则已转入账号级冷却）
+                                    if (!cred.isRateLimited && cred.failureStreak > 0) {
+                                        statusParts.push(
+                                            '窗口内失败 ' + cred.failureStreak + '/' + (cred.breakerThreshold || 3)
+                                        );
+                                    }
+                                }
+                                statusParts.push('上游: ' + shortUrl);
+                                const isActive =
+                                    !cred.isDomainBlocked &&
+                                    !cred.isDisabled &&
+                                    !cred.isExpired &&
+                                    !cred.isRateLimited &&
+                                    cred.index === manualSelectedIndex;
+                                let itemClass = cred.isDomainBlocked
+                                    ? 'domain-blocked'
+                                    : cred.isDisabled
+                                      ? 'disabled'
+                                      : cred.isExpired
+                                        ? 'expired'
+                                        : cred.isRateLimited
+                                          ? 'rate-limited'
+                                          : '';
+                                if (isActive) itemClass = 'active-credential';
+                                const toggleBtn =
+                                    cred.isDomainBlocked || cred.isDisabled
+                                        ? ''
+                                        : '<button class="btn btn-warning btn-small" onclick="toggleCredentialDisable(' +
+                                          cred.index +
+                                          ')">禁用</button>';
+                                let activeBtn = '';
+                                if (
+                                    !cred.isDomainBlocked &&
+                                    !cred.isDisabled &&
+                                    !cred.isExpired &&
+                                    !cred.isRateLimited &&
+                                    !isActive
+                                ) {
+                                    activeBtn =
+                                        '<button class="btn btn-primary btn-small" onclick="setActiveCredential(' +
+                                        cred.index +
+                                        ')">设为活跃</button>';
+                                }
+                                // 重置状态：清冷却 + 解除禁用（合并为一个按钮）
+                                const resetBtn =
+                                    !cred.isDomainBlocked && (cred.isRateLimited || cred.isDisabled)
+                                        ? '<button class="btn btn-secondary btn-small" onclick="resetCredentialRateLimit(' +
+                                          cred.index +
+                                          ')">重置状态</button>'
+                                        : '';
+                                const activeTag =
+                                    isActive && !cred.isDomainBlocked
+                                        ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;margin-left:8px;">活跃</span>'
+                                        : '';
+                                const rateLimitTag = cred.isRateLimited
+                                    ? '<span class="badge-ratelimit">' +
+                                      (reasonLabel[cred.rateLimitReason] || '限流') +
+                                      ' 冷却 ' +
+                                      cred.rateLimitRemainingStr +
+                                      '</span>'
+                                    : '';
+                                // 模型级锁（账号仍可用，仅这些模型被上游用量超限锁定）
+                                const modelLockTag =
+                                    Array.isArray(cred.modelCooldowns) && cred.modelCooldowns.length
+                                        ? cred.modelCooldowns
+                                              .map(
+                                                  (c) =>
+                                                      '<span class="badge-modellock" title="该模型上游用量超限，账号整体仍可用">' +
+                                                      c.model +
+                                                      ' 锁 ' +
+                                                      c.remainingStr +
+                                                      '</span>'
+                                              )
+                                              .join('')
+                                        : '';
+                                return `
+                        <li class="credential-item ${itemClass}">
+                            <div class="credential-info">
+                                <h4>${cred.email || cred.userId}${activeTag}${rateLimitTag}${modelLockTag}</h4>
+                                <p>${statusParts.join(' | ')}</p>
+                            </div>
+                            <div style="display: flex; gap: 6px;">
+                                ${activeBtn}
+                                ${resetBtn}
+                                ${toggleBtn}
+                                <button class="btn btn-danger btn-small" onclick="deleteCredential(${cred.index})">删除</button>
+                            </div>
+                        </li>
+                    `;
+                            })
+                            .join('') +
+                        '</ul>';
+                } catch (error) {
+                    showToast('加载凭证失败: ' + error.message, 'error');
+                }
+            }
+
+            async function refreshBilling() {
+                const list = document.getElementById('billingList');
+                list.innerHTML = '<div class="empty-state"><p>查询中... <span class="loading"></span></p></div>';
+                try {
+                    const response = await fetch('/codebuddyFE/billing/status');
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '查询失败');
+                    renderBilling(data.accounts || []);
+                    // 同步启动自动签到开关
+                    const toggle = document.getElementById('startupCheckinToggle');
+                    if (toggle) toggle.checked = data.startupCheckin === true;
+                    refreshScheduleStatus();
+                } catch (error) {
+                    list.innerHTML = '<div class="empty-state"><p>查询失败: ' + error.message + '</p></div>';
+                }
+            }
+
+            async function refreshScheduleStatus() {
+                const el = document.getElementById('scheduleStatus');
+                if (!el) return;
+                try {
+                    const resp = await fetch('/codebuddyFE/schedule/status');
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || '查询失败');
+                    const st = data.state || {};
+                    const lastStartup = st.lastStartupRun ? new Date(st.lastStartupRun).toLocaleString() : '—';
+                    const checkin = data.tasks && data.tasks.checkin;
+                    const growth = data.tasks && data.tasks.growth;
+                    const registered = (checkin && checkin.registered) || (growth && growth.registered);
+
+                    const codeStyle =
+                        'display:inline-block;background:#0d1117;color:#e6edf3;padding:4px 10px;border-radius:4px;font-family:Consolas,Monaco,monospace;font-size:0.8rem;margin:3px 0;';
+
+                    const statusBlock = registered
+                        ? '<div style="margin-top:8px;padding:8px 10px;background:#ecfdf5;border-left:3px solid #10b981;border-radius:4px;">' +
+                          '<strong>当前已在系统计划任务中运行</strong><br>' +
+                          '签到任务：' + (checkin && checkin.registered ? '已注册' : '未注册') +
+                          '　成长任务：' + (growth && growth.registered ? '已注册' : '未注册') +
+                          (checkin && checkin.nextRunTime ? '<br>下次运行：' + checkin.nextRunTime : '') +
+                          '</div>'
+                        : '';
+
+                    el.innerHTML =
+                        '自动化：每次启动项目时自动完成签到与成长日常（最近一次：' + lastStartup + '）' +
+                        (registered ? '　·　<strong style="color:#10b981;">已启用系统定时任务</strong>' : '') +
+                        '<details style="margin-top:6px;">' +
+                        '<summary style="cursor:pointer;color:#58a6ff;font-weight:500;">可选：不启动项目也定时执行（点击展开步骤）</summary>' +
+                        '<div style="margin-top:10px;line-height:1.9;font-size:0.85rem;">' +
+
+                        '<div style="padding:8px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;margin-bottom:12px;">' +
+                        '<strong>这一步是可选的。</strong>不操作也能用——只是提醒类收益（如猫猫旅行到站后的礼物）' +
+                        '要等到你下次启动项目时才会领取。' +
+                        '</div>' +
+
+                        '<strong>作用：</strong>让签到与成长日常在后台按固定时间自动跑，不需要一直开着项目。<br><br>' +
+
+                        '<strong style="color:#1f2937;">操作步骤</strong>' +
+                        '<ol style="margin:6px 0 0 20px;padding:0;">' +
+                        '<li style="margin-bottom:10px;">' +
+                        '打开<strong>本项目所在的文件夹</strong>（就是包含 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">package.json</code> 的那个目录），' +
+                        '在里面打开一个<strong>命令提示符 / PowerShell 窗口</strong>。' +
+                        '</li>' +
+
+                        '<li style="margin-bottom:10px;">' +
+                        '执行注册命令：<br>' +
+                        '<code style="' + codeStyle + '">npm run schedule:enable</code><br>' +
+                        '<div style="color:#6b7280;margin-top:2px;">' +
+                        '会弹出"用户账户控制"窗口询问是否允许，点<strong>是</strong>。（需要管理员权限才能创建系统任务）' +
+                        '</div>' +
+                        '</li>' +
+
+                        '<li style="margin-bottom:10px;">' +
+                        '看到下面这两行就表示成功：<br>' +
+                        '<code style="' + codeStyle + 'color:#7ee787;">[签到任务] 已注册（每天 08:05）</code><br>' +
+                        '<code style="' + codeStyle + 'color:#7ee787;">[成长任务] 已注册（每天 09:05 / 13:05 / 19:05 / 21:00）</code>' +
+                        '</li>' +
+
+                        '<li style="margin-bottom:10px;">' +
+                        '回到本页面点「刷新积分」，或执行下面的命令确认状态：<br>' +
+                        '<code style="' + codeStyle + '">npm run schedule:status</code>' +
+                        '</li>' +
+                        '</ol>' +
+
+                        '<strong style="color:#1f2937;">不需要了怎么删除</strong>' +
+                        '<div style="margin-top:4px;">' +
+                        '执行 <code style="' + codeStyle + '">npm run schedule:disable</code>' +
+                        '<div style="color:#6b7280;margin-top:2px;">会把上面创建的 2 个计划任务删掉，之后回到"只在启动时执行"的状态。</div>' +
+                        '</div>' +
+
+                        statusBlock +
+                        '</div></details>';
+                } catch (error) {
+                    el.textContent = '';
+                }
+            }
+
+            async function toggleStartupCheckin() {
+                const checked = document.getElementById('startupCheckinToggle').checked;
+                try {
+                    const response = await fetch('/codebuddyFE/billing/startup-checkin', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: checked})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message);
+                    } else {
+                        showToast(data.error || '配置失败', 'error');
+                        document.getElementById('startupCheckinToggle').checked = !checked;
+                    }
+                } catch (error) {
+                    showToast('配置失败: ' + error.message, 'error');
+                    document.getElementById('startupCheckinToggle').checked = !checked;
+                }
+            }
+
+            function renderBilling(accounts) {
+                const list = document.getElementById('billingList');
+                if (!accounts || accounts.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>暂无国内站凭证</p></div>';
+                    return;
+                }
+                list.innerHTML =
+                    '<ul class="credential-list">' +
+                    accounts
+                        .map((a) => {
+                            const remaining = a.remaining === null || a.remaining === undefined
+                                ? '<span style="color:#9ca3af;">待查询</span>'
+                                : '<strong>' + Number(a.remaining).toLocaleString('zh-CN', {maximumFractionDigits: 2}) + '</strong>';
+                            const staleTag = a.stale ? ' <span style="color:#f59e0b;font-size:0.7rem;">(待刷新)</span>' : '';
+                            const checkinTag = a.checkedToday
+                                ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;">已签到</span>'
+                                : '<button class="btn btn-secondary btn-small" onclick="singleCheckin(\'' + (a.userId || '').replace(/'/g, "\\'") + '\')">签到</button>';
+                            const errorLine = a.error ? '<p style="color:#ef4444;font-size:0.8rem;">' + a.error + '</p>' : '';
+                            return `
+                        <li class="credential-item">
+                            <div class="credential-info">
+                                <h4>${a.email || a.userId} ${checkinTag}</h4>
+                                <p>剩余积分: ${remaining}${staleTag} | 总容量: ${a.capacity ?? '—'} | 包数: ${a.packages ?? '—'}</p>
+                                ${errorLine}
+                            </div>
+                        </li>
+                    `;
+                        })
+                        .join('') +
+                    '</ul>';
+            }
+
+            async function singleCheckin(userId) {
+                try {
+                    const response = await fetch('/codebuddyFE/billing/checkin', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({userId})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message || '签到完成');
+                    } else {
+                        showToast(data.error || '签到失败', 'error');
+                    }
+                    refreshBilling();
+                } catch (error) {
+                    showToast('签到失败: ' + error.message, 'error');
+                }
+            }
+
+            async function batchCheckin(btn) {
+                if (btn) btn.disabled = true;
+                try {
+                    const response = await fetch('/codebuddyFE/billing/status');
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '查询失败');
+                    const unchecked = (data.accounts || []).filter((a) => !a.checkedToday && !a.error);
+                    if (unchecked.length === 0) {
+                        showToast('所有账号今日均已签到');
+                        return;
+                    }
+                    for (const a of unchecked) {
+                        await singleCheckin(a.userId);
+                    }
+                } catch (error) {
+                    showToast('批量签到失败: ' + error.message, 'error');
+                } finally {
+                    if (btn) btn.disabled = false;
+                }
+            }
+
+            // ========== 成长中心 ==========
+            async function refreshGrowth() {
+                const list = document.getElementById('growthList');
+                list.innerHTML = '<div class="empty-state"><p>查询中... <span class="loading"></span></p></div>';
+                try {
+                    const response = await fetch('/codebuddyFE/growth/status');
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '查询失败');
+                    renderGrowth(data.accounts || []);
+                } catch (error) {
+                    list.innerHTML = '<div class="empty-state"><p>查询失败: ' + error.message + '</p></div>';
+                }
+            }
+
+            function renderGrowth(accounts) {
+                const list = document.getElementById('growthList');
+                if (!accounts || accounts.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p>暂无国内个人站凭证</p></div>';
+                    return;
+                }
+
+                // 小卡片的统一外观：标题 + 一行说明 + 当前状态
+                const panel = (title, hint, value, badge) =>
+                    '<div style="flex:1 1 150px;min-width:150px;padding:8px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">' +
+                    '<div style="font-size:0.75rem;color:#6b7280;">' + title + '</div>' +
+                    '<div style="font-size:0.95rem;font-weight:600;color:#1f2937;margin:2px 0;">' + value + '</div>' +
+                    '<div style="font-size:0.72rem;color:#9ca3af;line-height:1.4;">' + hint + '</div>' +
+                    (badge || '') +
+                    '</div>';
+
+                const badge = (text, color) =>
+                    '<div style="margin-top:4px;display:inline-block;font-size:0.7rem;padding:1px 7px;border-radius:9px;background:' +
+                    color + ';color:#fff;">' + text + '</div>';
+
+                list.innerHTML =
+                    '<ul class="credential-list">' +
+                    accounts
+                        .map((a) => {
+                            if (a.supported === false) {
+                                return `<li class="credential-item disabled"><div class="credential-info"><h4>${a.userId}</h4><p>${a.reason || '不支持'}</p></div></li>`;
+                            }
+                            if (a.error) {
+                                return `<li class="credential-item expired"><div class="credential-info"><h4>${a.userId}</h4><p>查询失败: ${a.error}</p></div></li>`;
+                            }
+
+                            const s = a.streak || {};
+                            const t = a.travel || {};
+                            const tasks = a.tasks || {};
+                            const days = s.days || 0;
+                            const chances = a.lotteryChances ?? 0;
+
+                            // 连登：说清"连登 ≠ 签到"。连登由成长中心活跃热力决定，
+                            // 只有当天有对话活跃才计一天；签到发的是积分，两套体系互不影响。
+                            // 代理不替客户端上报活跃，所以 days=0 时不该显示"还差 N 天"——
+                            // 那个进度在代理场景下永远不会前进，属于虚假承诺。
+                            const nextGap = s.nextTierRemaining || 0;
+                            const streakHint = days > 0
+                                ? (s.nextTier
+                                    ? '连登可换积分/抽奖次数，距 ' + s.nextTier + ' 还差 ' + nextGap + ' 天'
+                                    : '连登可换积分/抽奖次数')
+                                : '连登按官方客户端的对话活跃累计，代理不代报';
+                            const redeemable = (s.tiers || []).filter((x) => x.status !== 'locked' && x.status !== 'claimed');
+                            const streakBadge = redeemable.length
+                                ? badge(redeemable.length + ' 档可兑换', '#8b5cf6')
+                                : '';
+
+                            // 猫猫：说清"派出去几小时后带礼物回来，礼物要手动领"
+                            const travelStateMap = {idle: '在家', traveling: '旅行中', arrived: '已到站待领取', unknown: '未知'};
+                            const travelState = travelStateMap[t.state] || t.state || '未知';
+                            const travelHint =
+                                t.state === 'arrived'
+                                    ? '礼物已带回，点「执行一次」领取'
+                                    : t.state === 'traveling'
+                                      ? '正在旅行，到站后带回礼物需手动领取'
+                                      : t.dailyLimitReached
+                                        ? '今日派出名额已用完，明天再来'
+                                        : '派它出去旅行，几小时后带回礼物';
+                            const travelBadge =
+                                t.state === 'arrived'
+                                    ? badge('待领取', '#f59e0b')
+                                    : t.state === 'traveling'
+                                      ? badge('旅行中', '#3b82f6')
+                                      : t.dailyLimitReached
+                                        ? badge('今日已用完', '#9ca3af')
+                                        : badge('可派出', '#10b981');
+
+                            // 抽奖：说清"有次数就能抽"
+                            const lotteryHint = chances > 0 ? '有次数，点「执行一次」抽完' : '暂无抽奖次数（兑换档位可得）';
+                            const lotteryBadge = chances > 0 ? badge(chances + ' 次可抽', '#ec4899') : '';
+
+                            // 任务：用进度条直观表达完成度
+                            const total = tasks.total || 0;
+                            const done = tasks.completed || 0;
+                            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                            const bar =
+                                '<div style="margin-top:5px;height:5px;background:#e5e7eb;border-radius:3px;overflow:hidden;">' +
+                                '<div style="width:' + pct + '%;height:100%;background:' + (tasks.maxLevel ? '#10b981' : '#3b82f6') + ';"></div>' +
+                                '</div>';
+
+                            // 汇总"今天还有没有事可做"
+                            const pending = [];
+                            if (redeemable.length) pending.push('兑换 ' + redeemable.length + ' 档');
+                            if (t.state === 'arrived') pending.push('领礼物');
+                            else if (t.state === 'idle' && !t.dailyLimitReached) pending.push('派猫');
+                            if (chances > 0) pending.push('抽奖 ' + chances + ' 次');
+                            const summary = pending.length
+                                ? '<span style="color:#f59e0b;">今日待办：' + pending.join('、') + '</span>'
+                                : '<span style="color:#10b981;">今日暂无待办</span>';
+
+                            return `<li class="credential-item" style="align-items:flex-start;">
+                                <div class="credential-info" style="width:100%;">
+                                    <h4>${a.userId}
+                                        <span style="font-size:0.72rem;font-weight:400;color:#6b7280;margin-left:8px;">${summary}</span>
+                                    </h4>
+                                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                                        ${panel('连登天数', streakHint, days + ' 天', streakBadge)}
+                                        ${panel('猫猫旅行', travelHint, travelState, travelBadge)}
+                                        ${panel('抽奖次数', lotteryHint, chances + ' 次', lotteryBadge)}
+                                        ${panel('成长任务', tasks.maxLevel ? '已达最高等级' : '完成任务提升等级', done + ' / ' + total, bar)}
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 6px; flex-shrink:0; margin-left:10px; margin-right:-16px;">
+                                    <button class="btn btn-primary btn-small" onclick="runGrowthOne('${(a.userId || '').replace(/'/g, "\\'")}')">执行一次</button>
+                                </div>
+                            </li>`;
+                        })
+                        .join('') +
+                    '</ul>' +
+                    '<div style="margin-top:8px;font-size:0.75rem;color:#9ca3af;line-height:1.6;">' +
+                    '「执行一次」会依次尝试：领取到站礼物 → 派出旅行 → 兑换已解锁档位 → 抽完次数。每个动作都先查状态，已完成的会自动跳过，可放心重复点。' +
+                    '</div>';
+            }
+
+            async function runGrowthOne(userId) {
+                try {
+                    const response = await fetch('/codebuddyFE/growth/run', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({userId})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        const parts = [];
+                        if (data.adopt && data.adopt.action !== 'skip') parts.push('领养');
+                        if (data.claim && data.claim.action === 'claimed') parts.push('领奖');
+                        if (data.depart && data.depart.action === 'departed') parts.push('派猫');
+                        if (data.streak && data.streak.message) parts.push(data.streak.message);
+                        showToast(parts.length ? '已完成: ' + parts.join('，') : '本日已无待办动作');
+                        refreshGrowth();
+                    } else {
+                        showToast(data.error || '执行失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('执行失败: ' + error.message, 'error');
+                }
+            }
+
+            async function loadModels() {
+                const container = document.getElementById('modelsContainer');
+                container.innerHTML = '<div class="empty-state"><p>加载中... <span class="loading"></span></p></div>';
+                try {
+                    const response = await fetch('/codebuddyFE/models');
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '查询失败');
+                    renderModels(data.models || [], data.fromCache === true);
+                } catch (error) {
+                    container.innerHTML = '<div class="empty-state"><p>加载失败: ' + error.message + '</p></div>';
+                }
+            }
+
+            function renderModels(models, fromCache) {
+                const container = document.getElementById('modelsContainer');
+                if (!models || models.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><p>暂无可用模型（请确认已添加有效凭证）</p></div>';
+                    return;
+                }
+                let html = '';
+                if (fromCache) {
+                    html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#f59e0b;">上游拉取失败，显示最近一次结果</p></div>';
+                }
+                // 按厂商分组
+                const vendorNames = {deepseek: 'DeepSeek', hunyuan: '腾讯混元', others: '其他', zhipu: '智谱 GLM', moonshot: 'Kimi', minimax: 'MiniMax'};
+                // 固定厂商展示顺序
+                const vendorOrder = ['deepseek', 'hunyuan', 'others', 'zhipu', 'moonshot', 'minimax'];
+                const groups = {};
+                for (const m of models) {
+                    (groups[m.vendor] ||= []).push(m);
+                }
+                // 每组内按倍率升序
+                for (const list of Object.values(groups)) {
+                    list.sort((a, b) => (a.creditsValue ?? Infinity) - (b.creditsValue ?? Infinity));
+                }
+                const fmtRate = (v) => v === null || v === undefined ? '—' : (v === 0 ? '免费' : 'x' + v);
+                for (const vendor of vendorOrder) {
+                    const list = groups[vendor];
+                    if (!list || list.length === 0) continue;
+                    const label = vendorNames[vendor] || vendor;
+                    html += '<div class="guide-step-title" style="margin-top: 12px;">' + label + '</div>';
+                    html += '<div class="guide-step-desc"><table class="guide-model-table"><thead><tr><th>模型</th><th>说明</th><th>倍率</th></tr></thead><tbody>';
+                    for (const m of list) {
+                        html += '<tr>' +
+                            '<td><code>' + m.id + '</code></td>' +
+                            '<td>' + m.name + '</td>' +
+                            '<td>' + fmtRate(m.creditsValue) + '</td>' +
+                            '</tr>';
+                    }
+                    html += '</tbody></table></div>';
+                }
+                container.innerHTML = html;
+            }
+
+            async function deleteCredential(index) {
+                if (!confirm('确定要删除此凭证吗？')) return;
+                try {
+                    const response = await fetch(`/codebuddyFE/credentials/delete`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index})
+                    });
+                    if (response.ok) {
+                        showToast('凭证已删除');
+                        loadCredentials();
+                    } else {
+                        throw new Error('删除失败');
+                    }
+                } catch (error) {
+                    showToast('删除失败: ' + error.message, 'error');
+                }
+            }
+
+            async function resetCredentialRateLimit(index) {
+                try {
+                    const response = await fetch(`/codebuddyFE/credentials/reset-ratelimit`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index, clearDisabled: true})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message);
+                        loadCredentials();
+                    } else {
+                        throw new Error(data.error || '操作失败');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            async function toggleCredentialDisable(index) {
+                try {
+                    const response = await fetch(`/codebuddyFE/credentials/toggle-disable`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index})
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        showToast(data.message);
+                        loadCredentials();
+                    } else {
+                        throw new Error(data.error || '操作失败');
+                    }
+                } catch (error) {
+                    showToast('操作失败: ' + error.message, 'error');
+                }
+            }
+
+            async function setActiveCredential(index) {
+                try {
+                    const response = await fetch(`/codebuddyFE/credentials/select`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index})
+                    });
+                    if (response.ok) {
+                        manualSelectedIndex = index;
+                        showToast('已设为活跃凭证');
+                        loadCredentials();
+                    } else {
+                        throw new Error('设置失败');
+                    }
+                } catch (error) {
+                    showToast('设置失败: ' + error.message, 'error');
+                }
+            }
+
+            function toggleApiKeyVisibility() {
+                apiKeyVisible = !apiKeyVisible;
+                const textEl = document.getElementById('apiKeyText');
+                const btn = document.getElementById('toggleKeyBtn');
+                if (apiKeyVisible && apiKeyPlain) {
+                    textEl.textContent = apiKeyPlain;
+                    btn.textContent = '🙈';
+                } else {
+                    textEl.textContent = apiKeyMasked;
+                    btn.textContent = '👁';
+                    apiKeyVisible = false;
+                }
+            }
+
+            async function copyApiKey() {
+                const keyToCopy = apiKeyPlain || apiKeyMasked;
+                if (!keyToCopy || keyToCopy === '****') {
+                    showToast('无可复制的 API Key', 'error');
+                    return;
+                }
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(keyToCopy);
+                    } else {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = keyToCopy;
+                        textarea.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                    }
+                    const btn = document.getElementById('copyKeyBtn');
+                    btn.textContent = '✓';
+                    btn.classList.add('copy-success');
+                    showToast('API Key 已复制');
+                    setTimeout(() => {
+                        btn.textContent = '📋';
+                        btn.classList.remove('copy-success');
+                    }, 2000);
+                } catch (error) {
+                    showToast('复制失败', 'error');
+                }
+            }
+
+            function updateGuideConfig() {
+                const baseUrl = window.location.origin;
+                const el = document.getElementById('guideConfigCode');
+                if (!el) return;
+                el.textContent = `{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "${apiKeyPlain || apiKeyMasked}",
+    "ANTHROPIC_BASE_URL": "${baseUrl}/codebuddy/anthropic",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.1",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.0"
+  }
+}`;
+                const openaiUrlEl = document.getElementById('guideOpenAIUrl');
+                if (openaiUrlEl) {
+                    openaiUrlEl.textContent = `${baseUrl}/codebuddy/v1`;
+                }
+                const responsesUrlEl = document.getElementById('guideResponsesUrl');
+                if (responsesUrlEl) {
+                    responsesUrlEl.textContent = `${baseUrl}/codebuddy/v1`;
+                }
+            }
+
+            function copyGuideConfig() {
+                const el = document.getElementById('guideConfigCode');
+                if (!el) return;
+                copyGuideText(el.textContent);
+            }
+
+            function copyGuideOpenAIUrl() {
+                const el = document.getElementById('guideOpenAIUrl');
+                if (!el) return;
+                copyGuideText(el.textContent);
+            }
+
+            function copyGuideResponsesUrl() {
+                const el = document.getElementById('guideResponsesUrl');
+                if (!el) return;
+                copyGuideText(el.textContent);
+            }
+
+            function copyGuideText(text) {
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(text);
+                    } else {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = text;
+                        textarea.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                    }
+                    showToast('已复制');
+                } catch {
+                    showToast('复制失败', 'error');
+                }
+            }
+
+            async function resetApiKey() {
+                if (!confirm('重置将同时影响所有端点（Copilot/CodeBuddy/Relay），旧 Key 将立即失效，确定？')) return;
+                try {
+                    const response = await fetch(`/codebuddyFE/regenerate-key`, {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    if (data.api_key) {
+                        apiKeyPlain = data.api_key;
+                        const body = apiKeyPlain.slice('sk-'.length);
+                        apiKeyMasked = 'sk-' + body.slice(0, 8) + '****' + body.slice(-4);
+                        apiKeyVisible = true;
+                        document.getElementById('apiKeyText').textContent = apiKeyPlain;
+                        document.getElementById('toggleKeyBtn').textContent = '🙈';
+                        showToast('API Key 已重置，请妥善保存');
+                    } else {
+                        throw new Error(data.error || '重置失败');
+                    }
+                } catch (error) {
+                    showToast('重置失败: ' + error.message, 'error');
+                }
+            }
+
+            window.addEventListener('resize', function () {
+                if (apiCallsChartInstance) apiCallsChartInstance.resize();
+                if (tokensChartInstance) tokensChartInstance.resize();
+                if (creditChartInstance) creditChartInstance.resize();
+            });
+
+            loadMyTenant();
+        </script>
+    </body>
+</html>
