@@ -27,16 +27,19 @@ import {
 } from '../transformer/responses-translator.js';
 import {
     getCredential,
-    peekCredential,
     indexOfCredential,
     noteUpstreamSuccess,
     noteUpstreamFailure,
     noteStreamOutcome
 } from '../services/codebuddy/auth.js';
 import {classifyStreamOutcome} from '../services/codebuddy/stream-outcome.js';
+import {shouldFailover, resolveMaxAttempts, DEFAULT_MAX_ATTEMPTS} from '../services/codebuddy/failover.js';
+import {pickScopedModelTargets, mergeModelResults, mapCodebuddyModelName} from '../services/codebuddy/model-scope.js';
+import {modelPermissionStore} from '../services/codebuddy/model-permissions.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
 import {handleWSConnection} from '../services/ws/ws-server.js';
+import {intEnv} from '../utils/env.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -51,16 +54,9 @@ function extractCacheHitTokens(usage) {
     return 0;
 }
 
-// 主要是处理codex兼容
-export function mapCodebuddyModelName(model) {
-    if (!model || typeof model !== 'string') return model;
-    const lower = model.toLowerCase();
-    if (lower.includes('codex')) return 'deepseek-v4-flash';
-    if (lower.startsWith('gpt-')) {
-        return lower.includes('mini') ? 'deepseek-v4-flash' : 'kimi-k2.6';
-    }
-    return model;
-}
+// 模型名映射已移到 services/codebuddy/model-scope.js，面板与网关共用同一份规则。
+// 这里 import 进来供本模块使用，同时 re-export 保持既有调用方不变。
+export {mapCodebuddyModelName};
 
 /**
  * 选择用于统计记录的模型名
@@ -125,6 +121,59 @@ function sendAnthropicError(res, status, message, hint = '') {
 function handleUpstreamRateLimit(error, credIndex, model) {
     if (error instanceof CodeBuddyApiError) {
         noteUpstreamFailure(error, credIndex, model);
+        // 顺手学一下权限：真实请求撞上「账号类型不支持这个模型」时记一笔，
+        // 之后 /v1/models 就不再返回它，客户端（CC Switch 等）也就不会选到。
+        // 只读记录，不影响账号调度。
+        recordModelPermission(credIndex, model, error);
+    }
+}
+
+/**
+ * 把「这个模型对这个账号不可用」记进权限缓存
+ * @param {number} credIndex
+ * @param {string} model
+ * @param {Error} error
+ */
+function recordModelPermission(credIndex, model, error) {
+    if (!Number.isInteger(credIndex) || credIndex < 0 || !model) return;
+    const tm = credentialStore.getTokenManager();
+    const entry = tm.credentials[credIndex];
+    if (!entry?.filePath) return;
+    const account = String(entry.filePath).split(/[\\/]/).pop();
+    const data = entry.data || {};
+    try {
+        modelPermissionStore.recordBlocked({
+            account,
+            model,
+            error,
+            email: data.user_info?.email || data.user_id || '',
+            baseUrl: data.base_url || ''
+        });
+    } catch (err) {
+        // 权限缓存是锦上添花，写失败不能影响请求本身
+        logger.debug(`记录模型权限失败: ${err.message}`);
+    }
+}
+
+/**
+ * 真实请求成功时，清掉该模型的「不可用」记录
+ *
+ * 为什么需要：权限不是永久的。用户升级套餐、或者上次只是额度用完，
+ * 之后一次成功调用就证明它能用了，缓存必须跟着改回来——
+ * 否则用户会看到「明明刚用成功过，列表里还标着不可用」。
+ * @param {number} credIndex
+ * @param {string} model
+ */
+function clearModelPermission(credIndex, model) {
+    if (!Number.isInteger(credIndex) || credIndex < 0 || !model) return;
+    const tm = credentialStore.getTokenManager();
+    const entry = tm.credentials[credIndex];
+    if (!entry?.filePath) return;
+    const account = String(entry.filePath).split(/[\\/]/).pop();
+    try {
+        modelPermissionStore.recordAvailable(account, model);
+    } catch (err) {
+        logger.debug(`清除模型权限记录失败: ${err.message}`);
     }
 }
 
@@ -142,14 +191,14 @@ function handleUpstreamRateLimit(error, credIndex, model) {
  * @param {boolean} [opts.receivedAnyDelta]
  * @param {Object|null} [opts.errorFrame] - 解析出的上游 error 对象（可能带 status/code）
  */
-function accountStreamOutcome({credIndex, model, sessionKey, error = null, aborted = false, sawUpstreamErrorFrame = false, receivedAnyDelta = false, errorFrame = null}) {
+function accountStreamOutcome({credIndex, model, sessionKey, affinityScope, error = null, aborted = false, sawUpstreamErrorFrame = false, receivedAnyDelta = false, errorFrame = null}) {
     if (!Number.isInteger(credIndex) || credIndex < 0) return;
 
     // 流被中断（网络错误/客户端断开）优先按中断归因——此时即使之前出现过 error 帧，
     // 也不是"上游业务失败"，不该罚账号
     if (error) {
         const outcome = classifyStreamOutcome({error, aborted, receivedAnyDelta});
-        noteStreamOutcome(credIndex, outcome, {sessionKey, errorFrame});
+        noteStreamOutcome(credIndex, outcome, {sessionKey, affinityScope, errorFrame});
         return;
     }
 
@@ -168,30 +217,180 @@ function accountStreamOutcome({credIndex, model, sessionKey, error = null, abort
     const outcome = classifyStreamOutcome({aborted, sawUpstreamErrorFrame, receivedAnyDelta});
     // 带上 errorFrame：即便本分支按 5xx 语义记熔断，noteStreamOutcome 也会
     // 先识别渠道级错误码（6021/11128）并短路，不误罚账号
-    noteStreamOutcome(credIndex, outcome, {sessionKey, errorFrame});
+    noteStreamOutcome(credIndex, outcome, {sessionKey, affinityScope, errorFrame});
+
+    // 流正常跑完就是「这个模型能用」的实证：清掉之前记的不可用
+    // （升级套餐后、或上次只是额度用完，都会走到这里）
+    if (outcome === 'success' && model) {
+        clearModelPermission(credIndex, model);
+    }
 }
 
 /**
- * 非流式请求成功后：清账号失败计数
+ * 非流式请求成功后：清账号失败计数，并清掉该模型的「不可用」记录
  * @param {number} credIndex
+ * @param {string} [model] - 成功用到的模型；传了就顺手更新权限缓存
  */
-function noteNonStreamSuccess(credIndex) {
+function noteNonStreamSuccess(credIndex, model) {
     noteUpstreamSuccess(credIndex);
+    if (model) clearModelPermission(credIndex, model);
+}
+
+/**
+ * 取本次请求所用 API Key 的 CodeBuddy 账号作用域
+ *
+ * 网关鉴权时挂在 `req._gatewayKey` 上；`allowedCredentialFiles` 三态：
+ * null = 不限（老 Key 与默认 Key 都是这个值），数组 = 白名单。
+ * copilot / relay 不读这个字段。
+ * @param {Object} req
+ * @returns {null|string[]}
+ */
+function scopeOf(req) {
+    return req?._gatewayKey?.allowedCredentialFiles ?? null;
+}
+
+/**
+ * 作用域命名空间：让同一会话在不同 Key 下各绑各的账号，互不解绑。
+ * 不限账号的 Key 统一用 '*'，多个老 Key 之间共享粘性是正确行为（它们看到的是同一个池）。
+ * @param {Object} req
+ * @returns {string}
+ */
+function affinityScopeOf(req) {
+    const key = req?._gatewayKey;
+    if (!key) return '*';
+    const scope = key.allowedCredentialFiles;
+    if (scope === null || scope === undefined) return '*';
+    return `${key.id}:${scope.length}`;
 }
 
 /**
  * 获取凭证，若无可用凭证则返回错误
  * 网关层已统一完成客户端 API Key 鉴权
  * @param {Object} [opts]
+ * @param {Object} [opts.req] - 原始请求（用于读取 Key 作用域）
  * @param {string} [opts.sessionKey] - 会话键（用于粘性绑定）
  * @param {string} [opts.model] - 当前请求模型（用于模型级冷却判定）
+ * @param {number[]} [opts.excludeIndexes] - 本次请求已失败过的账号
+ * @param {boolean} [opts.preferDifferentSite] - 优先挑不同上游站点
  */
-function getCredentialOrFail(opts) {
-    const credential = getCredential(opts);
+function getCredentialOrFail(opts = {}) {
+    const {req, ...rest} = opts;
+    const credential = getCredential({
+        ...rest,
+        allowedFilenames: scopeOf(req),
+        affinityScope: affinityScopeOf(req)
+    });
     if (!credential) {
         return {error: {status: 503, message: 'No available credentials'}};
     }
     return {credential};
+}
+
+/**
+ * 作用域内还能用的账号数量（供 failover 判断值不值得重试）
+ * @param {Object} req
+ * @param {string} [model]
+ * @returns {number}
+ */
+function countUsableCredentials(req, model) {
+    const tm = credentialStore.getTokenManager();
+    const allowed = scopeOf(req);
+    const allowedSet = allowed === null || allowed === undefined ? null : new Set(allowed.map(String));
+    let count = 0;
+    for (let i = 0; i < tm.credentials.length; i++) {
+        const entry = tm.credentials[i];
+        const filename = String(entry.filePath || '').split(/[\\/]/).pop();
+        if (allowedSet !== null && !allowedSet.has(filename)) continue;
+        if (tm.disabledIndexes.includes(i)) continue;
+        if (tm.isRateLimited(i)) continue;
+        if (model && tm.isModelCooled(i, model)) continue;
+        if (tm.isTokenExpired(entry.data)) continue;
+        count++;
+    }
+    return count;
+}
+
+/**
+ * 在同一请求内获取上游响应，失败时换号重试
+ *
+ * 为什么放在这里做：换号只发生在客户端下一次请求上，而客户端每次重试都要重新
+ * 等一遍上游超时（首字节 120s），用户看到的就是"卡几分钟无提示"。给一次同请求内的
+ * 换号机会，能把这段等待压缩成「一次超时 + 一次成功」。
+ *
+ * 安全边界：本函数只能在 `writeHead(200)` 之前调用。一旦开流就不能换号，
+ * 否则会把两条上游的流拼成一条发给客户端。
+ *
+ * @param {Object} params
+ * @param {Object} params.req - 原始请求（读 Key 作用域）
+ * @param {string} [params.sessionKey]
+ * @param {string} [params.model]
+ * @param {Function} params.send - (payload, credential, meta) => Promise<response>
+ *        payload 已在外部构造好，credential 由本函数挑选
+ * @param {Function} [params.onFailure] - (error, credIndex, model) => void，用于归因冷却
+ * @returns {Promise<{response: Object, credential: Object, credIndex: number, meta: Object}>}
+ */
+async function requestWithFailover({req, sessionKey, model, send, onFailure}) {
+    const maxAttempts = resolveMaxAttempts(
+        countUsableCredentials(req, model),
+        intEnv('CODEBUDDY_FAILOVER_ATTEMPTS', {default: DEFAULT_MAX_ATTEMPTS, min: 1, max: 5})
+    );
+
+    const triedIndexes = [];
+    let lastError = null;
+    let lastCredential = null;
+    let lastCredIndex = -1;
+    let lastMeta = {};
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const authResult = getCredentialOrFail({
+            req,
+            sessionKey,
+            model,
+            // 第一次不排除任何号；重试时排除已试过的，并优先换站点
+            excludeIndexes: triedIndexes.length > 0 ? triedIndexes : undefined,
+            preferDifferentSite: triedIndexes.length > 0
+        });
+
+        if (authResult.error) {
+            // 没有可用号了：如果之前失败过，把上游错误回给客户端（更能说明问题）；
+            // 否则报"无可用凭证"
+            if (lastError) break;
+            throw Object.assign(new Error(authResult.error.message), {status: authResult.error.status});
+        }
+
+        const credential = authResult.credential;
+        const credIndex = indexOfCredential(credential);
+        const meta = {attempt, isRetry: attempt > 0};
+
+        try {
+            const response = await send(credential, meta);
+            return {response, credential, credIndex, meta};
+        } catch (error) {
+            lastError = error;
+            lastCredential = credential;
+            lastCredIndex = credIndex;
+            lastMeta = meta;
+
+            // 先归因：让冷却/熔断照常生效，下一次选号就不会再挑它
+            if (onFailure) onFailure(error, credIndex, model);
+
+            if (credIndex >= 0) triedIndexes.push(credIndex);
+
+            const moreAttemptsLeft = attempt + 1 < maxAttempts;
+            if (!moreAttemptsLeft || !shouldFailover(error)) {
+                throw error;
+            }
+
+            logger.warn(
+                `[CodeBuddy] 请求失败，换号重试（第 ${attempt + 2}/${maxAttempts} 次）：` +
+                    `${error.message?.slice(0, 120) || error}`
+            );
+        }
+    }
+
+    // 重试中把号用光了：抛最后一次的错误
+    if (lastError) throw lastError;
+    throw Object.assign(new Error('No available credentials'), {status: 503, credential: lastCredential, meta: lastMeta});
 }
 
 /**
@@ -221,30 +420,29 @@ async function handleOpenAIChatCompletions(req, res) {
 
         // 会话粘性：从原始请求提取会话键，优先复用同一凭证
         sessionKey = extractConversationKey(req, openAIPayload);
-        const authResult = getCredentialOrFail({sessionKey, model});
-        if (authResult.error) {
-            sendOpenAIError(
-                res,
-                authResult.error.status,
-                authResult.error.message,
-                authResult.error.status === 401 ? 'authentication_error' : 'api_error'
-            );
-            return;
-        }
-        credIndex = indexOfCredential(authResult.credential);
 
-        // 注入行为规则（统一在路由层注入一次）
+        // 注入行为规则（统一在路由层注入一次，重试复用同一份 payload）
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
 
-        // 直接调用 CodeBuddy API（已经是 OpenAI 格式）
-        const response = await createChatCompletions(openAIPayload, {
-            credential: authResult.credential,
-            conversationId: req.headers['x-conversation-id'],
+        // 选号 + 单次上游调用；失败时在同一请求内换号重试
+        // （此时还没 writeHead，客户端一个字节都没收到，换号对它完全透明）
+        const outcome = await requestWithFailover({
+            req,
             sessionKey,
-            conversationRequestId: req.headers['x-conversation-request-id'],
-            conversationMessageId: req.headers['x-conversation-message-id'],
-            requestId: req.headers['x-request-id']
+            model,
+            onFailure: (error, idx, m) => handleUpstreamRateLimit(error, idx, m),
+            send: (credential) =>
+                createChatCompletions(openAIPayload, {
+                    credential,
+                    conversationId: req.headers['x-conversation-id'],
+                    sessionKey,
+                    conversationRequestId: req.headers['x-conversation-request-id'],
+                    conversationMessageId: req.headers['x-conversation-message-id'],
+                    requestId: req.headers['x-request-id']
+                })
         });
+        const response = outcome.response;
+        credIndex = outcome.credIndex;
 
         // 流式响应：使用 rewriteOpenAIStream 对 reasoning_content 做缓冲合并，避免 thinking 被逐 token 刷成多个块
         if (openAIPayload.stream) {
@@ -265,16 +463,16 @@ async function handleOpenAIChatCompletions(req, res) {
                 },
                 {
                     // 成功判定延后到流真正结束（而非拿到 200 响应头就记成功）
-                    onStreamEnd: (facts) => accountStreamOutcome({credIndex, model, sessionKey, ...facts}),
+                    onStreamEnd: (facts) => accountStreamOutcome({credIndex, model, sessionKey, affinityScope: affinityScopeOf(req), ...facts}),
                     onStreamError: (err, facts) =>
-                        accountStreamOutcome({credIndex, model, sessionKey, error: err, aborted: res.destroyed, ...facts})
+                        accountStreamOutcome({credIndex, model, sessionKey, affinityScope: affinityScopeOf(req), error: err, aborted: res.destroyed, ...facts})
                 }
             );
         } else {
             const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
             // 非流式：聚合成功返回后才记成功
-            noteNonStreamSuccess(credIndex);
+            noteNonStreamSuccess(credIndex, model);
 
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
@@ -318,23 +516,116 @@ async function handleOpenAIChatCompletions(req, res) {
 }
 
 /**
+ * 拉取并合并作用域内各站点的模型列表
+ *
+ * 分组与合并的规则在 `services/codebuddy/model-scope.js` 里，便于单测直接盯住
+ * 「按 baseUrl 而不是 realm 分组」这条约束。
+ *
+ * **按权限过滤**：上游 `/v3/config` 给的是「客户端能看见的模型」，不是「你的账号能调的」。
+ * 免费账号能看见 gpt-5.5 但一调就 11158，客户端（CC Switch 等）选了才报错。
+ * 所以这里按「模型来源账号」查一遍已知权限，不可用的直接不返回。
+ *
+ * @param {null|string[]} allowedFilenames
+ * @returns {Promise<{targets: Array, models: Array, filtered: Array}>}
+ */
+async function collectScopedModels(allowedFilenames) {
+    const tm = credentialStore.getTokenManager();
+    const targets = pickScopedModelTargets(tm, allowedFilenames);
+    if (targets.length === 0) return {targets, models: [], filtered: []};
+
+    const settled = await Promise.allSettled(
+        targets.map(async ({baseUrl, account, credential}) => {
+            const result = await getModels(credential);
+            return {
+                account,
+                models: Array.isArray(result?.data) ? result.data : []
+            };
+        })
+    );
+    for (const outcome of settled) {
+        if (outcome.status === 'rejected') {
+            logger.warn('拉取站点模型列表失败:', outcome.reason?.message || outcome.reason);
+        }
+    }
+
+    // 先合并去重，再按「该模型的来源账号」逐条查权限。
+    // 同一个模型可能来自多个账号，只要有一个账号能用就保留。
+    const merged = mergeModelResults(settled);
+    const sourceAccounts = new Map();
+    for (const outcome of settled) {
+        if (outcome.status !== 'fulfilled') continue;
+        const account = outcome.value.account;
+        if (!account) continue;
+        for (const m of outcome.value.models) {
+            if (!m?.id) continue;
+            if (!sourceAccounts.has(m.id)) sourceAccounts.set(m.id, []);
+            sourceAccounts.get(m.id).push(account);
+        }
+    }
+
+    const models = [];
+    const filtered = [];
+    for (const model of merged) {
+        // 权限要按「真正发给上游的模型名」判断。
+        // `gpt-5.5` 这类名字会在请求前被 mapCodebuddyModelName 改写成 kimi-k2.6，
+        // 上游永远看不到 gpt-5.5，也就不会因为它没权限而失败——
+        // 对客户端来说这个模型是可用的，不能过滤掉。
+        const upstreamModel = mapCodebuddyModelName(model.id);
+        const accounts = sourceAccounts.get(model.id) || [];
+
+        // 没有任何来源账号信息时不做过滤（保守：宁可多给，也别把能用的藏起来）
+        if (accounts.length === 0) {
+            models.push(model);
+            continue;
+        }
+        // 只要有一个来源账号能用就保留。
+        // 注意：额度类（6004「今日用完」）不算不可用——明天就恢复，
+        // 从列表里拿掉会让客户端以为这个模型不存在。
+        const hasUsableAccount = accounts.some((acc) => {
+            const verdict = modelPermissionStore.isBlocked(acc, upstreamModel);
+            return !verdict.blocked || verdict.kind === 'quota';
+        });
+        if (hasUsableAccount) {
+            models.push(model);
+        } else {
+            filtered.push({
+                id: model.id,
+                reason:
+                    modelPermissionStore.isBlocked(accounts[0], upstreamModel).reason || '当前账号不可用'
+            });
+        }
+    }
+
+    return {targets, models, filtered};
+}
+
+/**
  * 处理 OpenAI 格式的 /v1/models 请求
+ *
+ * 按调用方 API Key 的作用域收窄：只返回被允许账号所属站点的模型。
  */
 async function handleOpenAIModels(req, res) {
     try {
-        // 模型列表为非聊天查询：只读取号，不推进轮换计数、不参与粘性
-        const credential = peekCredential();
-        if (!credential) {
-            sendOpenAIError(res, 503, 'No available credentials', 'api_error');
+        const {targets, models, filtered} = await collectScopedModels(scopeOf(req));
+        if (targets.length === 0) {
+            sendOpenAIError(res, 503, 'No available credentials for this API key', 'api_error');
             return;
         }
-
-        const modelsData = await getModels(credential);
+        if (models.length === 0) {
+            sendOpenAIError(res, 503, 'No available models for this API key', 'api_error');
+            return;
+        }
+        if (filtered.length > 0) {
+            logger.debug(
+                `[CodeBuddy] /v1/models 按账号权限过滤掉 ${filtered.length} 个模型: ` +
+                    filtered.map((f) => `${f.id}(${f.reason})`).join(', ')
+            );
+        }
 
         // 返回 OpenAI 格式
         sendJson(res, 200, {
             object: 'list',
-            data: modelsData.data.map((model) => ({
+            data: models.map((model) => ({
                 id: model.id,
                 object: 'model',
                 created: Math.floor(Date.now() / 1000),
@@ -367,25 +658,28 @@ async function handleAnthropicMessages(req, res) {
 
         // 会话粘性：从原始请求提取会话键
         sessionKey = extractConversationKey(req, anthropicPayload);
-        const authResult = getCredentialOrFail({sessionKey, model});
-        if (authResult.error) {
-            sendAnthropicError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        credIndex = indexOfCredential(authResult.credential);
 
         // 注入行为规则（translateMessages 不再内部注入，统一在路由层注入一次）
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
 
-        // 调用 CodeBuddy API
-        const response = await createChatCompletions(openAIPayload, {
-            credential: authResult.credential,
-            conversationId: req.headers['x-conversation-id'],
+        // 选号 + 上游调用；失败时同请求内换号重试（此时尚未 writeHead）
+        const outcome = await requestWithFailover({
+            req,
             sessionKey,
-            conversationRequestId: req.headers['x-conversation-request-id'],
-            conversationMessageId: req.headers['x-conversation-message-id'],
-            requestId: req.headers['x-request-id']
+            model,
+            onFailure: (error, idx, m) => handleUpstreamRateLimit(error, idx, m),
+            send: (credential) =>
+                createChatCompletions(openAIPayload, {
+                    credential,
+                    conversationId: req.headers['x-conversation-id'],
+                    sessionKey,
+                    conversationRequestId: req.headers['x-conversation-request-id'],
+                    conversationMessageId: req.headers['x-conversation-message-id'],
+                    requestId: req.headers['x-request-id']
+                })
         });
+        const response = outcome.response;
+        credIndex = outcome.credIndex;
 
         // 判断是否为流式响应
         if (anthropicPayload.stream) {
@@ -545,6 +839,7 @@ async function handleAnthropicMessages(req, res) {
                     credIndex,
                     model,
                     sessionKey,
+                    affinityScope: affinityScopeOf(req),
                     sawUpstreamErrorFrame,
                     receivedAnyDelta,
                     errorFrame: upstreamErrorFrame
@@ -562,6 +857,7 @@ async function handleAnthropicMessages(req, res) {
                     credIndex,
                     model,
                     sessionKey,
+                    affinityScope: affinityScopeOf(req),
                     error: err,
                     aborted: res.destroyed,
                     sawUpstreamErrorFrame,
@@ -572,7 +868,7 @@ async function handleAnthropicMessages(req, res) {
             // 非流式响应
             const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
-            noteNonStreamSuccess(credIndex);
+            noteNonStreamSuccess(credIndex, model);
 
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
@@ -642,17 +938,24 @@ async function handleAnthropicCountTokens(req, res) {
  */
 async function handleAnthropicModels(req, res) {
     try {
-        // 模型列表为非聊天查询：只读取号，不推进轮换计数、不参与粘性
-        const credential = peekCredential();
-        if (!credential) {
-            sendAnthropicError(res, 503, 'No available credentials');
+        const {targets, models, filtered} = await collectScopedModels(scopeOf(req));
+        if (targets.length === 0) {
+            sendAnthropicError(res, 503, 'No available credentials for this API key');
             return;
         }
-
-        const modelsData = await getModels(credential);
+        if (models.length === 0) {
+            sendAnthropicError(res, 503, 'No available models for this API key');
+            return;
+        }
+        if (filtered.length > 0) {
+            logger.debug(
+                `[CodeBuddy] /anthropic/v1/models 按账号权限过滤掉 ${filtered.length} 个模型: ` +
+                    filtered.map((f) => `${f.id}(${f.reason})`).join(', ')
+            );
+        }
 
         sendJson(res, 200, {
-            data: modelsData.data.map((model) => ({
+            data: models.map((model) => ({
                 id: model.id,
                 object: 'model',
                 created: 0,
@@ -687,22 +990,27 @@ async function handleResponsesAPI(req, res) {
 
         // 会话粘性：从原始 responsesReq（含 input）提取
         sessionKey = extractConversationKey(req, responsesReq);
-        const authResult = getCredentialOrFail({sessionKey, model});
-        if (authResult.error) {
-            sendOpenAIError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        credIndex = indexOfCredential(authResult.credential);
 
         chatReq.messages = injectBehaviorRules(chatReq.messages);
-        const response = await createChatCompletions(chatReq, {
-            credential: authResult.credential,
-            conversationId: req.headers['x-conversation-id'],
+
+        // 选号 + 上游调用；失败时同请求内换号重试（此时尚未 writeHead）
+        const outcome = await requestWithFailover({
+            req,
             sessionKey,
-            conversationRequestId: req.headers['x-conversation-request-id'],
-            conversationMessageId: req.headers['x-conversation-message-id'],
-            requestId: req.headers['x-request-id']
+            model,
+            onFailure: (error, idx, m) => handleUpstreamRateLimit(error, idx, m),
+            send: (credential) =>
+                createChatCompletions(chatReq, {
+                    credential,
+                    conversationId: req.headers['x-conversation-id'],
+                    sessionKey,
+                    conversationRequestId: req.headers['x-conversation-request-id'],
+                    conversationMessageId: req.headers['x-conversation-message-id'],
+                    requestId: req.headers['x-request-id']
+                })
         });
+        const response = outcome.response;
+        credIndex = outcome.credIndex;
 
         if (responsesReq.stream) {
             // 流式：解析 Chat SSE -> Responses SSE
@@ -785,6 +1093,7 @@ async function handleResponsesAPI(req, res) {
                     credIndex,
                     model,
                     sessionKey,
+                    affinityScope: affinityScopeOf(req),
                     sawUpstreamErrorFrame,
                     receivedAnyDelta,
                     errorFrame: upstreamErrorFrame
@@ -799,6 +1108,7 @@ async function handleResponsesAPI(req, res) {
                     credIndex,
                     model,
                     sessionKey,
+                    affinityScope: affinityScopeOf(req),
                     error: err,
                     aborted: res.destroyed,
                     sawUpstreamErrorFrame,
@@ -809,7 +1119,7 @@ async function handleResponsesAPI(req, res) {
             // 非流式
             const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
-            noteNonStreamSuccess(credIndex);
+            noteNonStreamSuccess(credIndex, model);
 
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
@@ -865,24 +1175,29 @@ async function handleResponsesCompact(req, res) {
 
         // 会话粘性：从原始 compactReq 提取
         sessionKey = extractConversationKey(req, compactReq);
-        const authResult = getCredentialOrFail({sessionKey, model});
-        if (authResult.error) {
-            sendOpenAIError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        credIndex = indexOfCredential(authResult.credential);
 
         chatReq.messages = injectBehaviorRules(chatReq.messages);
-        const response = await createChatCompletions(chatReq, {
-            credential: authResult.credential,
-            conversationId: req.headers['x-conversation-id'],
-            sessionKey
+
+        // 选号 + 上游调用；失败时同请求内换号重试
+        const outcome = await requestWithFailover({
+            req,
+            sessionKey,
+            model,
+            onFailure: (error, idx, m) => handleUpstreamRateLimit(error, idx, m),
+            send: (credential) =>
+                createChatCompletions(chatReq, {
+                    credential,
+                    conversationId: req.headers['x-conversation-id'],
+                    sessionKey
+                })
         });
+        const response = outcome.response;
+        credIndex = outcome.credIndex;
 
         const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
         const aggregated = await aggregateStreamResponse(response.body);
         // 非流式：聚合成功返回后才记成功
-        noteNonStreamSuccess(credIndex);
+        noteNonStreamSuccess(credIndex, model);
 
         const inputTokens = aggregated.usage?.prompt_tokens || 0;
         const outputTokens = aggregated.usage?.completion_tokens || 0;
@@ -1081,32 +1396,35 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
 
             // 会话粘性：从原始 WS payload 提取会话键
             const sessionKey = extractConversationKey(req, payload);
-            const credential = getCredential({sessionKey, model: mappedModel});
-            if (!credential) {
-                throw Object.assign(new Error('No valid CodeBuddy credentials'), {
-                    name: 'ResponsesWSError',
-                    event: {type: 'error', error: {message: 'No valid CodeBuddy credentials', code: 'no_credentials'}}
-                });
-            }
-            const credIndex = indexOfCredential(credential);
-
+            // WS 完全绕过 routeCodebuddyRequest，作用域必须在这里手动传：
+            // 只改 HTTP 那四个调用点会让受限 Key 通过 WS 通道越权。
             chatReq.messages = injectBehaviorRules(chatReq.messages);
             chatReq.stream = true;
+
+            // 选号 + 上游调用；失败时同请求内换号重试。
+            // WS 的安全边界比 HTTP 更晚：到这里还没有向客户端发过任何事件帧，
+            // 所以换号同样对客户端透明。一旦下面的 for-await 开始 yield，就不能再换了。
             let response;
+            let credIndex = -1;
             try {
-                response = await createChatCompletions(chatReq, {
-                    credential,
-                    conversationId: req.headers['x-conversation-id'],
+                const outcome = await requestWithFailover({
+                    req,
                     sessionKey,
-                    conversationRequestId: req.headers['x-conversation-request-id'],
-                    conversationMessageId: req.headers['x-conversation-message-id'],
-                    requestId: req.headers['x-request-id']
+                    model: mappedModel,
+                    onFailure: (error, idx, m) => handleUpstreamRateLimit(error, idx, m),
+                    send: (credential) =>
+                        createChatCompletions(chatReq, {
+                            credential,
+                            conversationId: req.headers['x-conversation-id'],
+                            sessionKey,
+                            conversationRequestId: req.headers['x-conversation-request-id'],
+                            conversationMessageId: req.headers['x-conversation-message-id'],
+                            requestId: req.headers['x-request-id']
+                        })
                 });
+                response = outcome.response;
+                credIndex = outcome.credIndex;
             } catch (err) {
-                // 上游非 2xx：施加分级冷却（修复此前"标记 429"永不执行的死代码）
-                if (err instanceof CodeBuddyApiError) {
-                    handleUpstreamRateLimit(err, credIndex, mappedModel);
-                }
                 throw Object.assign(err instanceof Error ? err : new Error(String(err)), {
                     name: 'ResponsesWSError',
                     event: {
@@ -1174,6 +1492,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                     credIndex,
                     model: mappedModel,
                     sessionKey,
+                    affinityScope: affinityScopeOf(req),
                     error: streamError,
                     aborted: !streamCompleted,
                     sawUpstreamErrorFrame,

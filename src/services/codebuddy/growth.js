@@ -1,5 +1,5 @@
 /**
- * CodeBuddy 成长中心 —— 连登、猫猫旅行、抽奖、任务状态
+ * CodeBuddy 成长中心 —— 连登兑换、猫猫旅行、抽奖
  * @module services/codebuddy/growth
  *
  * 背景
@@ -17,7 +17,10 @@
  *
  * 已知边界
  * -------
- * - 任务体系：本模块只做**状态查询与展示**，不自动"完成"任务（任务多需真实行为）。
+ * - 任务体系：**不做**。5 个成长任务（首次对话 / 技能安装 / 链接微信 / 召唤专家 /
+ *   使用模板）由上游按账号行为判定，本模块查不到逐项状态、也没有提交端点
+ *   （实测 tasks/claim 等均 404）。CLI 侧技能是纯本地文件、不上报，
+ *   所以代理无法触发其中任何一项。面板也不再展示这个数字。
  * - 连登兑换 / 抽奖：仅在档位已解锁 / 有抽奖次数时才动作（前置门控）。
  * - 猫猫旅行：无猫→同意协议+领养；idle→派出；arrived→领奖。
  */
@@ -141,36 +144,6 @@ export async function queryStreak(credential) {
             chances: t.chances,
             status: redemption[`tier_${t.tier}_status`] || 'locked'
         }))
-    };
-}
-
-/**
- * 查询成长任务列表与完成进度
- * @returns {Promise<{tasks: Array, completed: number, total: number, level: number, maxLevel: boolean}>}
- */
-export async function queryGrowthTasks(credential) {
-    const tasksData = await callGrowth(credential, 'tasks', {retryOnNetwork: true});
-    let profile = {completed: 0, total: 0, level: 0, max_level: false};
-    try {
-        profile = (await callGrowth(credential, 'profile', {retryOnNetwork: true})) || profile;
-    } catch (err) {
-        logger.warn(`[CodeBuddy growth] profile 查询失败: ${err.message}`);
-    }
-    const tasks = (tasksData?.tasks || []).map((t) => ({
-        taskId: t.task_id,
-        code: t.code,
-        title: t.title,
-        description: t.description,
-        levelName: t.level_name,
-        status: t.status
-    }));
-    return {
-        tasks,
-        completed: parseInt(profile.completed || 0, 10),
-        total: parseInt(profile.total || tasks.length, 10),
-        level: parseInt(profile.level || 0, 10),
-        levelName: profile.level_name || '',
-        maxLevel: profile.max_level === true
     };
 }
 
@@ -452,6 +425,10 @@ export async function runGrowthDaily(credential) {
 
 /**
  * 查询某账号的成长中心概览（供管理面板展示，全部只读）
+ *
+ * 只查面板真正显示的两项：猫猫旅行状态。其余（连登、抽奖次数、成长任务、
+ * 猫猫档案）前端都不消费，多查一次就是白打一次上游请求，所以不查。
+ *
  * @returns {Promise<Object>}
  */
 export async function queryGrowthOverview(credential) {
@@ -464,29 +441,9 @@ export async function queryGrowthOverview(credential) {
     }
     const out = {supported: true, userId: credential.user_id || 'unknown'};
     try {
-        out.streak = await queryStreak(credential);
-    } catch (err) {
-        out.streakError = err.message;
-    }
-    try {
-        out.tasks = await queryGrowthTasks(credential);
-    } catch (err) {
-        out.tasksError = err.message;
-    }
-    try {
         out.travel = await queryTravelStatus(credential);
     } catch (err) {
         out.travelError = err.message;
-    }
-    try {
-        out.buddy = await queryBuddyInfo(credential);
-    } catch (err) {
-        out.buddyError = err.message;
-    }
-    try {
-        out.lotteryChances = await queryLotteryChances(credential);
-    } catch (err) {
-        out.lotteryError = err.message;
     }
     return out;
 }

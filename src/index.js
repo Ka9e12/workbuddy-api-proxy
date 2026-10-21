@@ -73,11 +73,51 @@ function initializeCopilot() {
 }
 
 /**
+ * 跑一轮签到 + 成长日常
+ *
+ * 幂等由各环节自己保证：签到按 `checkinDate` 日粒度跳过、成长中心的每个写操作
+ * 都先查上游状态再决定是否提交。所以重复调用是安全的，最多多打几次只读查询。
+ *
+ * @param {string} source - 触发来源，只用于日志与调度状态展示
+ */
+async function runDailyAutomation(source) {
+    try {
+        const results = await checkinOnStartup();
+        try {
+            recordScheduleRun(source, {startupCheckinCount: results.length});
+        } catch {
+            /* ignore */
+        }
+        if (results.length > 0) {
+            logger.info(`[CodeBuddy] ${source} 签到完成：${results.length} 个账号`);
+        }
+
+        // 成长日常与签到共用同一开关
+        if (!getStartupCheckinConfig()) {
+            logger.info(`[CodeBuddy] ${source} 自动化已在面板中关闭，跳过成长日常`);
+            return;
+        }
+        const creds = getGrowthCredentials();
+        if (creds.length === 0) return;
+        for (const cred of creds) {
+            try {
+                const r = await runGrowthDaily(cred);
+                logger.info(`[CodeBuddy growth] ${source} 成长日常 user=${cred.user_id || 'unknown'}: ${JSON.stringify(r)}`);
+            } catch (err) {
+                logger.warn(`[CodeBuddy growth] ${source} 成长日常失败 user=${cred.user_id || 'unknown'}: ${err.message}`);
+            }
+        }
+    } catch (err) {
+        logger.warn(`[CodeBuddy] ${source} 自动化异常:`, err.message);
+    }
+}
+
+/**
  * 初始化 CodeBuddy 服务
  *
  * 自动化任务的默认形态：**服务启动时跑一次**签到与成长日常，不注册任何系统计划任务。
- * 若用户希望一天多次（例如猫猫旅行到站后及时领奖），可在面板按指引自行配置，
- * 属于可选增强，不影响默认行为。
+ * 也不做进程内定时——正常用法是每天打开一次服务，启动即签到；签到本身按日期幂等，
+ * 同一天多开几次也不会重复领奖。
  */
 function initializeCodebuddy() {
     const hasCredentials = credentialStore.hasCredentials();
@@ -86,38 +126,7 @@ function initializeCodebuddy() {
         const info = tm.getCurrentCredentialInfo();
 
         // 启动时签到与成长日常（默认开启，面板可关闭），异步执行不阻塞服务启动
-        checkinOnStartup()
-            .then((results) => {
-                // 记录本次启动运行时间，供面板展示
-                try {
-                    recordScheduleRun('startup', {startupCheckinCount: results.length});
-                } catch {
-                    /* ignore */
-                }
-                if (results.length > 0) {
-                    logger.info(`[CodeBuddy] 启动签到完成：${results.length} 个账号`);
-                }
-                // 成长日常与签到共用同一开关
-                if (!getStartupCheckinConfig()) {
-                    logger.info('[CodeBuddy] 启动自动化已在面板中关闭，跳过成长日常');
-                    return;
-                }
-                const creds = getGrowthCredentials();
-                if (creds.length === 0) return;
-                (async () => {
-                    for (const cred of creds) {
-                        try {
-                            const r = await runGrowthDaily(cred);
-                            logger.info(`[CodeBuddy growth] 启动成长日常 user=${cred.user_id || 'unknown'}: ${JSON.stringify(r)}`);
-                        } catch (err) {
-                            logger.warn(`[CodeBuddy growth] 启动成长日常失败 user=${cred.user_id || 'unknown'}: ${err.message}`);
-                        }
-                    }
-                })();
-            })
-            .catch((err) => {
-                logger.warn('启动签到检查异常:', err.message);
-            });
+        runDailyAutomation('startup');
     } else {
         logger.info('No CodeBuddy credentials found');
         logger.info('  Please add credentials via the admin panel: /codebuddyFE');

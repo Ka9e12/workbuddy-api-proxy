@@ -26,7 +26,7 @@ import {
     requireAdminAuth,
     requireGatewayAuth
 } from './services/gateway/admin-auth.js';
-import {isGatewayAuthEnabled, verifyGatewayToken, reloadGatewayToken, isAdminAuthEnabled, reloadAdminCredentials, reloadAdminCredentialsFromSync} from './services/gateway/auth.js';
+import {isGatewayAuthEnabled, resolveGatewayKey, reloadGatewayApiKeys, isAdminAuthEnabled, reloadAdminCredentials, reloadAdminCredentialsFromSync} from './services/gateway/auth.js';
 import {copilotState} from './services/copilot/state.js';
 import {copilotStore} from './services/copilot/copilot-store.js';
 import {isAuthenticated} from './services/copilot/auth.js';
@@ -115,6 +115,9 @@ function send404(req, res) {
  * WS 握手时支持以下方式传递令牌：
  * 1. Authorization: Bearer <token> header（随 upgrade 请求发送）
  * 2. api_key URL 参数：?api_key=<token>
+ *
+ * 与 HTTP 路径一样把 Key 记录挂到 req 上：WS 完全绕过 routeXxxRequest，
+ * 只做布尔判定会让「按 Key 限定 CodeBuddy 账号」在 WS 通道失效。
  */
 function requireGatewayAuthWS(req) {
     if (!isGatewayAuthEnabled()) {
@@ -125,17 +128,23 @@ function requireGatewayAuthWS(req) {
     // 从 URL 参数获取
     const url = new URL(req.url, `http://${req.headers.host}`);
     const apiKeyParam = url.searchParams.get('api_key');
-    if (apiKeyParam && verifyGatewayToken(apiKeyParam)) {
-        req._gatewayAuthenticated = true;
-        return true;
+    if (apiKeyParam) {
+        const key = resolveGatewayKey(apiKeyParam);
+        if (key) {
+            req._gatewayAuthenticated = true;
+            req._gatewayKey = key;
+            return true;
+        }
     }
 
     // 从 Authorization header 获取
     const auth = req.headers['authorization'];
     if (auth) {
         const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
-        if (verifyGatewayToken(token)) {
+        const key = resolveGatewayKey(token);
+        if (key) {
             req._gatewayAuthenticated = true;
+            req._gatewayKey = key;
             return true;
         }
     }
@@ -154,7 +163,10 @@ function handleBroadcastEvent(data) {
     switch (type) {
         // Gateway
         case 'gateway-token-regenerated':
-            reloadGatewayToken();
+        case 'gateway-api-keys-changed':
+            // 两个事件名指向同一个动作：混跑版本时旧 worker 发前者、新 worker 发后者，
+            // 都表示「Key 列表在磁盘上变了，重读」。
+            reloadGatewayApiKeys();
             break;
         case 'admin-credentials-cleared':
             reloadAdminCredentials();

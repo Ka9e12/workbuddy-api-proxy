@@ -201,6 +201,59 @@ class TenantTokenManager {
     }
 
     /**
+     * 把「允许使用的凭证文件名」归一成 Set
+     *
+     * 传 null/undefined 表示不限（全部账号，含以后新增的），返回 null。
+     * 其余情况（包括空数组）返回 Set —— 空数组是显式全禁，不能退化成不限。
+     * @param {null|undefined|string[]|Set<string>} allowedFilenames
+     * @returns {Set<string>|null}
+     */
+    _allowedSet(allowedFilenames) {
+        if (allowedFilenames === null || allowedFilenames === undefined) return null;
+        if (allowedFilenames instanceof Set) return allowedFilenames;
+        if (!Array.isArray(allowedFilenames)) return null;
+        return new Set(allowedFilenames.map(String));
+    }
+
+    /**
+     * 该下标的凭证是否在作用域内
+     * @param {number} index
+     * @param {Set<string>|null} allowedSet - null 表示不限
+     * @returns {boolean}
+     */
+    _isAllowed(index, allowedSet) {
+        if (allowedSet === null) return true;
+        const key = this._credentialKey(index);
+        return key !== null && allowedSet.has(key);
+    }
+
+    /**
+     * 构造会话粘性键
+     *
+     * 绑定与解绑必须共用这一个函数：多 Key 之后键带上了作用域前缀，
+     * 若解绑侧仍传裸 sessionKey，两边永远对不上，解绑会静默失效。
+     * @param {string} sessionKey
+     * @param {string} [affinityScope]
+     * @returns {string|null}
+     */
+    static affinityKeyOf(sessionKey, affinityScope) {
+        if (!sessionKey) return null;
+        return affinityScope ? `${affinityScope}:${sessionKey}` : sessionKey;
+    }
+
+    /**
+     * 上游站点标识（同一 baseUrl 视为同一站点）
+     * @param {number} index
+     * @returns {string}
+     */
+    _siteOf(index) {
+        const entry = this.credentials[index];
+        if (!entry) return '';
+        const data = entry.data || {};
+        return String(data.base_url || data.domain || '').trim().toLowerCase();
+    }
+
+    /**
      * 把 priorityOrder 收敛到当前真实存在的凭证，并去重。
      *
      * 顺序本身要保留（它就是用户意图），只丢掉已经不存在的条目；
@@ -423,10 +476,17 @@ class TenantTokenManager {
      * @param {Object} [opts]
      * @param {string} [opts.sessionKey] - 会话键（用于粘性绑定）
      * @param {string} [opts.model] - 当前请求模型（用于模型级冷却判定）
+     * @param {null|string[]} [opts.allowedFilenames] - 只在这个文件名白名单里选号；
+     *        null/省略 = 不限。空数组 = 显式全禁（返回 null，绝不回落到白名单外）
+     * @param {string} [opts.affinityScope] - 粘性命名空间（不同 API Key 用不同作用域，
+     *        避免同一个会话在两个 Key 之间互相解绑）
+     * @param {number[]} [opts.excludeIndexes] - 本次请求已经失败过的账号，重试时排除
+     * @param {boolean} [opts.preferDifferentSite] - 优先挑上游站点与 excludeIndexes 不同的账号
+     *        （跨站点重试的价值远大于同站点换号：国际站的 WAF 拦不到国内站）
      * @returns {Object|null}
      */
     getNextCredential(opts = {}) {
-        const {sessionKey, model} = opts;
+        const {sessionKey, model, allowedFilenames, affinityScope, excludeIndexes, preferDifferentSite} = opts;
         if (this.credentials.length === 0) {
             return null;
         }
@@ -435,22 +495,67 @@ class TenantTokenManager {
         this._cleanupRateLimited();
         this._cleanupAffinity();
 
-        const validCredentials = [];
-        for (let i = 0; i < this.credentials.length; i++) {
-            if (this.disabledIndexes.includes(i)) {
-                continue;
+        // 作用域过滤必须发生在候选构建阶段，而不是事后 filter：
+        // 后面的 currentValidIndices / _pickByPriority / _pickRotate / _pickWeighted
+        // 全都依赖这份候选集。
+        const allowedSet = this._allowedSet(allowedFilenames);
+
+        // 重试时排除刚失败过的账号。全部被排除则忽略排除名单（宁可重复试，
+        // 也不要在还有可用号的情况下返回 null）。
+        const excludeSet = Array.isArray(excludeIndexes) && excludeIndexes.length > 0
+            ? new Set(excludeIndexes.filter((i) => Number.isInteger(i) && i >= 0))
+            : null;
+
+        const collect = (set) => {
+            const out = [];
+            for (let i = 0; i < this.credentials.length; i++) {
+                if (set && set.has(i)) continue;
+                if (!this._isAllowed(i, allowedSet)) continue;
+                if (this.disabledIndexes.includes(i)) continue;
+                if (this.isRateLimited(i)) continue;
+                // 模型级冷却：仅当请求指定模型且该模型对被冷却时跳过
+                if (model && this.isModelCooled(i, model)) continue;
+                if (!this.isTokenExpired(this.credentials[i].data)) {
+                    out.push({index: i, credential: this.credentials[i]});
+                }
             }
-            if (this.isRateLimited(i)) {
-                continue;
-            }
-            // 模型级冷却：仅当请求指定模型且该模型对被冷却时跳过
-            if (model && this.isModelCooled(i, model)) {
-                continue;
-            }
-            if (!this.isTokenExpired(this.credentials[i].data)) {
-                validCredentials.push({index: i, credential: this.credentials[i]});
+            return out;
+        };
+
+        let validCredentials = collect(excludeSet);
+        if (validCredentials.length === 0 && excludeSet) {
+            logger.debug('所有候选都被重试排除名单滤掉了，忽略排除名单再选一次');
+            validCredentials = collect(null);
+        }
+
+        // 跨站点优先：把与已失败账号不同站点的候选提到前面。
+        // 同一站点内部换号解决不了 11128/6021 这类渠道级问题，换站点才有意义。
+        if (preferDifferentSite && validCredentials.length > 1 && excludeSet) {
+            const failedSites = new Set(
+                Array.from(excludeSet)
+                    .filter((i) => i < this.credentials.length)
+                    .map((i) => this._siteOf(i))
+            );
+            if (failedSites.size > 0) {
+                const preferred = validCredentials.filter((vc) => !failedSites.has(this._siteOf(vc.index)));
+                if (preferred.length > 0) {
+                    validCredentials = preferred;
+                }
             }
         }
+
+        // 作用域内只有一个可用号时没有轮换可言：直接返回它。
+        // 直接返回也避免了推进 currentIndex/usageCount —— 单号池里这些计数没有意义，
+        // 反而会让"以后加了第二个号"的上手位置变得不可预期。
+        if (validCredentials.length === 1) {
+            const only = validCredentials[0].index;
+            this.lastPickWasFallback = false;
+            this._touchPick(only);
+            return this.credentials[only].data;
+        }
+
+        // 会话粘性键：带上作用域，避免同一个会话在两个 Key 下互相解绑
+        const affinityKey = TenantTokenManager.affinityKeyOf(sessionKey, affinityScope);
 
         // 0) 每次选号先重置兜底标记（下面各正常分支覆盖为 false，兜底分支置 true）
         this.lastPickWasFallback = false;
@@ -458,7 +563,8 @@ class TenantTokenManager {
         if (validCredentials.length === 0) {
             // 所有凭证都在冷却：兜底选"最早到期"的那个临时代班（不打穿长冷却）
             // 纪律：不得清空冷却标记、不得推进任何计数（否则重试本身把账号越推越冷）
-            const fallback = this._selectFallback(model);
+            // 兜底同样受作用域约束 —— 这是第二条越权通道，白名单里没有可用号时必须返回 null。
+            const fallback = this._selectFallback(model, allowedSet);
             if (fallback) return fallback;
             logger.error('No valid (non-expired) credentials available');
             this.lastReturnedIndex = null;
@@ -477,7 +583,13 @@ class TenantTokenManager {
             this.manualSelectedIndex >= 0 &&
             this.manualSelectedIndex < this.credentials.length
         ) {
-            if (this.disabledIndexes.includes(this.manualSelectedIndex)) {
+            // 手动选中不走 validCredentials，必须单独做作用域判断：
+            // 漏这一处就是完整越权（面板上点过「设为活跃」的号能绕开 Key 白名单）。
+            // 不在白名单时按"暂不可用"处理，不清除 manualSelectedIndex —— 与其冷却语义一致，
+            // 作用域恢复后会自动回到这个号。
+            if (!this._isAllowed(this.manualSelectedIndex, allowedSet)) {
+                logger.debug('Manually selected credential is outside key scope, falling back');
+            } else if (this.disabledIndexes.includes(this.manualSelectedIndex)) {
                 logger.warn('Manually selected credential is disabled, falling back to automatic rotation');
                 this.manualSelectedIndex = null;
             } else if (this.isRateLimited(this.manualSelectedIndex) || (model && this.isModelCooled(this.manualSelectedIndex, model))) {
@@ -500,8 +612,8 @@ class TenantTokenManager {
         if (this.priorityOrder.length > 0) {
             const pickedIndex = this._pickByPriority(validCredentials);
             if (pickedIndex !== null) {
-                if (sessionKey) {
-                    this.sessionAffinity.set(sessionKey, {
+                if (affinityKey) {
+                    this.sessionAffinity.set(affinityKey, {
                         index: pickedIndex,
                         expiresAt: Date.now() + TenantTokenManager.AFFINITY_TTL
                     });
@@ -512,18 +624,18 @@ class TenantTokenManager {
         }
 
         // 3) 会话粘性：命中且该凭证仍可用则复用（不递增 usageCount）
-        if (sessionKey) {
-            const bound = this.sessionAffinity.get(sessionKey);
+        if (affinityKey) {
+            const bound = this.sessionAffinity.get(affinityKey);
             if (bound) {
                 if (currentValidIndices.includes(bound.index)) {
                     bound.expiresAt = Date.now() + TenantTokenManager.AFFINITY_TTL;
                     this._touchPick(bound.index);
-                    logger.debug(`Affinity hit: ${sessionKey} → credential #${bound.index}`);
+                    logger.debug(`Affinity hit: ${affinityKey} → credential #${bound.index}`);
                     return this.credentials[bound.index].data;
                 }
                 // 绑定的凭证已不可用 → 解绑重选
-                this.sessionAffinity.delete(sessionKey);
-                logger.debug(`Affinity unbind (credential unavailable): ${sessionKey}`);
+                this.sessionAffinity.delete(affinityKey);
+                logger.debug(`Affinity unbind (credential unavailable): ${affinityKey}`);
             }
         }
 
@@ -536,8 +648,8 @@ class TenantTokenManager {
         }
 
         // 绑定会话（若本次是带 sessionKey 的聊天请求）
-        if (sessionKey) {
-            this.sessionAffinity.set(sessionKey, {
+        if (affinityKey) {
+            this.sessionAffinity.set(affinityKey, {
                 index: pickedIndex,
                 expiresAt: Date.now() + TenantTokenManager.AFFINITY_TTL
             });
@@ -574,12 +686,14 @@ class TenantTokenManager {
     /**
      * 兜底选择（全池冷却时）：按最早的冷却到期时间挑一个，且不推进任何计数
      * @param {string} [model]
+     * @param {Set<string>|null} [allowedSet] - 作用域；null 表示不限
      * @returns {Object|null}
      */
-    _selectFallback(model) {
+    _selectFallback(model, allowedSet = null) {
         let bestIndex = -1;
         let bestExpiry = Infinity;
         for (let i = 0; i < this.credentials.length; i++) {
+            if (!this._isAllowed(i, allowedSet)) continue;
             if (this.disabledIndexes.includes(i)) continue;
             if (this.isTokenExpired(this.credentials[i].data)) continue;
             if (model && this.isModelCooled(i, model)) continue;
@@ -682,12 +796,29 @@ class TenantTokenManager {
 
     /**
      * 解绑某会话（请求失败时调用）
+     *
+     * 必须用 affinityKeyOf 拼键：多 Key 之后绑定键带作用域前缀，
+     * 直接拿裸 sessionKey 去查永远 miss，这条解绑会变成死代码。
      * @param {string} sessionKey
+     * @param {string} [affinityScope] - 与绑定时相同的命名空间
      */
-    unbindSession(sessionKey) {
-        if (sessionKey && this.sessionAffinity.has(sessionKey)) {
-            this.sessionAffinity.delete(sessionKey);
-            logger.debug(`Affinity unbound on failure: ${sessionKey}`);
+    unbindSession(sessionKey, affinityScope) {
+        const key = TenantTokenManager.affinityKeyOf(sessionKey, affinityScope);
+        if (key && this.sessionAffinity.has(key)) {
+            this.sessionAffinity.delete(key);
+            logger.debug(`Affinity unbound on failure: ${key}`);
+            return;
+        }
+        // 兜底：未带作用域时把该会话在所有作用域下的绑定一并清掉。
+        // 调用方漏传 scope 时宁可多解绑一次，也不要让会话钉在坏号上。
+        if (sessionKey && affinityScope === undefined) {
+            const suffix = `:${sessionKey}`;
+            for (const existing of Array.from(this.sessionAffinity.keys())) {
+                if (existing === sessionKey || existing.endsWith(suffix)) {
+                    this.sessionAffinity.delete(existing);
+                    logger.debug(`Affinity unbound on failure (all scopes): ${existing}`);
+                }
+            }
         }
     }
 
@@ -715,16 +846,22 @@ class TenantTokenManager {
     /**
      * 只读获取一个当前可用凭证（不推进轮换计数、不绑定会话）
      * 用于模型列表等非聊天查询，避免其副作用干扰轮换节奏
+     * @param {Object} [opts]
+     * @param {null|string[]} [opts.allowedFilenames] - 作用域白名单；null/省略 = 不限
      * @returns {Object|null}
      */
-    peekCredential() {
+    peekCredential(opts = {}) {
         if (this.credentials.length === 0) return null;
         this._cleanupRateLimited();
+        // 三个分支都必须受作用域约束：任一处漏判都会让受限 Key 的模型列表
+        // 拿到白名单外账号所属站点的模型。
+        const allowedSet = this._allowedSet(opts.allowedFilenames);
         // 优先手动选择
         if (
             this.manualSelectedIndex !== null &&
             this.manualSelectedIndex >= 0 &&
             this.manualSelectedIndex < this.credentials.length &&
+            this._isAllowed(this.manualSelectedIndex, allowedSet) &&
             !this.disabledIndexes.includes(this.manualSelectedIndex) &&
             !this.isRateLimited(this.manualSelectedIndex) &&
             !this.isTokenExpired(this.credentials[this.manualSelectedIndex].data)
@@ -735,6 +872,7 @@ class TenantTokenManager {
         if (
             this.currentIndex >= 0 &&
             this.currentIndex < this.credentials.length &&
+            this._isAllowed(this.currentIndex, allowedSet) &&
             !this.disabledIndexes.includes(this.currentIndex) &&
             !this.isRateLimited(this.currentIndex) &&
             !this.isTokenExpired(this.credentials[this.currentIndex].data)
@@ -744,6 +882,7 @@ class TenantTokenManager {
         // 最后第一个可用者
         for (let i = 0; i < this.credentials.length; i++) {
             if (
+                this._isAllowed(i, allowedSet) &&
                 !this.disabledIndexes.includes(i) &&
                 !this.isRateLimited(i) &&
                 !this.isTokenExpired(this.credentials[i].data)
@@ -1287,6 +1426,16 @@ class TenantTokenManager {
      * @returns {Array}
      */
     getCredentialsInfo() {
+        // 先数一遍可路由账号：单号池时面板要把唯一的那个标成"活跃"
+        // （单号池没有轮换，游标可能指不到它，仅凭 currentIndex 会漏标）
+        let routableCount = 0;
+        for (let i = 0; i < this.credentials.length; i++) {
+            if (this.disabledIndexes.includes(i)) continue;
+            if (this.isRateLimited(i)) continue;
+            if (this.isTokenExpired(this.credentials[i].data)) continue;
+            routableCount++;
+        }
+
         const list = this.credentials.map((cred, index) => {
             const data = cred.data;
             const filename = basename(cred.filePath);
@@ -1387,6 +1536,10 @@ class TenantTokenManager {
                     : -1,
                 isManualSelected: index === this.manualSelectedIndex,
                 isCurrentRotation: index === this.currentIndex,
+                // 全池只剩这一个可路由账号时，它必然是下一个请求会用的号：
+                // 「轮换」在单号池里没有意义，面板据此直接标成「活跃」，不必依赖
+                // 手动选择或优先级排序（否则没排过序的用户会看到没有任何号是活跃的）。
+                isOnlyRoutable: routableCount === 1 && unroutableReason === null,
                 isRoutable: unroutableReason === null,
                 unroutableReason,
                 tokenType: data.token_type || 'Bearer',

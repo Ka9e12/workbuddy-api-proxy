@@ -25,6 +25,20 @@ function idleTimeoutMs() {
 }
 
 /**
+ * 首字节超时（毫秒）：从发出请求到收到响应头的最长等待。
+ *
+ * 这一段和"流空闲"是两件事：200 响应头一到，这个超时就解除了，
+ * 所以它不会误杀慢速长回答，也不会影响 thinking 模型慢慢吐字。
+ * 它真正管的是"TCP 连上了但对面不回话"——上游故障最常见的形态。
+ *
+ * 默认 45 秒（http-client 的内建默认是 120 秒，对故障切换来说太久了：
+ * 一次失败要等两分钟才轮到换号）。可用 CODEBUDDY_CONNECT_TIMEOUT_MS 覆盖。
+ */
+function connectTimeoutMs() {
+    return intEnv('CODEBUDDY_CONNECT_TIMEOUT_MS', {default: 45 * 1000, min: 0});
+}
+
+/**
  * CodeBuddy API 错误
  * 保留上游 HTTP 状态码与业务 code，便于路由层区分 429 / 6004 等特殊状态
  */
@@ -551,6 +565,9 @@ export async function createChatCompletions(payload, options = {}) {
         method: 'POST',
         headers,
         body: JSON.stringify(normalizePayload(requestPayload, {source: 'codebuddy', upstream: baseUrl})),
+        // 首字节超时：只管"发出请求 → 收到响应头"。上游卡住不回话时靠它尽早失败，
+        // 好让上层换号重试；200 一到就解除，不影响后续慢速流式输出。
+        timeout: options.timeout ?? connectTimeoutMs(),
         // CodeBuddy 只支持流式；reasoning 模型可能长时间只吐 thinking token。
         // 用较宽的流空闲阈值（默认 300s）避免误杀"深思考"，同时保证真正卡死的流会被中断。
         idleTimeout: options.idleTimeout ?? idleTimeoutMs()

@@ -316,6 +316,9 @@ export function requireGatewayAuth(req, res) {
 
     // 认证成功，标记请求
     req._gatewayAuthenticated = true;
+    // 挂上 Key 记录：CodeBuddy 路由据此把「允许的账号白名单」透传给选号逻辑。
+    // copilot / relay 不读这个字段，但它们仍受「Key 必须有效」约束。
+    req._gatewayKey = result.key || null;
     apiRateLimiter.recordSuccess(clientIp);
     return true;
 }

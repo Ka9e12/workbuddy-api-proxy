@@ -41,7 +41,10 @@ async function routeCopilotWithHeaders(headers) {
 }
 
 test('auth accepts Claude Code ANTHROPIC_AUTH_TOKEN through Authorization bearer', async () => {
-    assert.deepEqual(authenticateGatewayRequest({authorization: `Bearer ${apiKey}`}), {authenticated: true});
+    // 多 Key 之后返回值多了 key 字段，断言按字段比较而不是整体 deepEqual
+    const result = authenticateGatewayRequest({authorization: `Bearer ${apiKey}`});
+    assert.equal(result.authenticated, true);
+    assert.ok(result.key && typeof result.key.id === 'string' && result.key.id.length > 0);
 
     // Copilot 路由使用 GitHub OAuth 而非 gateway 鉴权，因此不会返回 API Key 错误
     const copilotResult = await routeCopilotWithHeaders({authorization: `Bearer ${apiKey}`});
@@ -49,14 +52,18 @@ test('auth accepts Claude Code ANTHROPIC_AUTH_TOKEN through Authorization bearer
 });
 
 test('auth accepts Claude Code ANTHROPIC_API_KEY through x-api-key', async () => {
-    assert.deepEqual(authenticateGatewayRequest({'x-api-key': apiKey}), {authenticated: true});
+    const result = authenticateGatewayRequest({'x-api-key': apiKey});
+    assert.equal(result.authenticated, true);
+    assert.ok(result.key && typeof result.key.id === 'string' && result.key.id.length > 0);
 
     const copilotResult = await routeCopilotWithHeaders({'x-api-key': apiKey});
     assert.notEqual(copilotResult.body.error?.message, 'Invalid API Key. Check your API key or visit /copilotFE.');
 });
 
 test('Authorization bearer takes precedence over x-api-key compatibility header', async () => {
-    assert.deepEqual(authenticateGatewayRequest({authorization: `Bearer ${apiKey}`, 'x-api-key': 'sk-stale'}), {authenticated: true});
+    const result = authenticateGatewayRequest({authorization: `Bearer ${apiKey}`, 'x-api-key': 'sk-stale'});
+    assert.equal(result.authenticated, true);
+    assert.ok(result.key && typeof result.key.id === 'string' && result.key.id.length > 0);
 
     const copilotResult = await routeCopilotWithHeaders({authorization: `Bearer ${apiKey}`, 'x-api-key': 'sk-stale'});
     assert.notEqual(copilotResult.body.error?.message, 'Invalid API Key. Check your API key or visit /copilotFE.');

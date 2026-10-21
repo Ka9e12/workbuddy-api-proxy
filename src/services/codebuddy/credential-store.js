@@ -102,8 +102,8 @@ class CredentialStore {
         return this.tokenManager.getNextCredential(opts);
     }
 
-    peekCredential() {
-        return this.tokenManager.peekCredential();
+    peekCredential(opts) {
+        return this.tokenManager.peekCredential(opts);
     }
 
     markLastReturnedRateLimited(durationMs, reason) {

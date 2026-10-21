@@ -21,10 +21,12 @@ export function getCredential(opts) {
 /**
  * 只读获取一个当前可用凭证（不推进轮换计数、不绑定会话）
  * 用于模型列表等非聊天查询
+ * @param {Object} [opts]
+ * @param {null|string[]} [opts.allowedFilenames] - 作用域白名单；null/省略 = 不限
  * @returns {Object|null}
  */
-export function peekCredential() {
-    return credentialStore.peekCredential();
+export function peekCredential(opts) {
+    return credentialStore.peekCredential(opts);
 }
 
 /**
@@ -112,6 +114,7 @@ export function noteUpstreamFailure(error, credIndex, model) {
  * @param {string} outcome - classifyStreamOutcome 的结果
  * @param {Object} [meta]
  * @param {string} [meta.sessionKey] - 会话键（network 终态时解绑粘性，避免下次仍钉在坏号上）
+ * @param {string} [meta.affinityScope] - 粘性命名空间；必须与选号时用的一致，否则解绑查不到
  * @param {Object} [meta.errorFrame] - 流内 error 帧（可能带 status/code）；带 6021/11128 时不罚账号
  */
 export function noteStreamOutcome(index, outcome, meta = {}) {
@@ -138,7 +141,7 @@ export function noteStreamOutcome(index, outcome, meta = {}) {
         case 'network':
             // 网络/链路问题：不罚账号（不是账号的错），但解绑会话粘性，
             // 让下一次请求重新选号、自然分散到其它账号
-            if (meta.sessionKey) tm.unbindSession(meta.sessionKey);
+            if (meta.sessionKey) tm.unbindSession(meta.sessionKey, meta.affinityScope);
             break;
         case 'client-abort':
         case 'empty':

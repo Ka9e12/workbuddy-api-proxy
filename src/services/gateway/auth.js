@@ -5,15 +5,16 @@
  * @module services/gateway/auth
  */
 
-import {createHash, randomBytes, timingSafeEqual} from 'crypto';
-import {existsSync, mkdirSync, writeFileSync, readFileSync} from 'fs';
+import {createHash, timingSafeEqual} from 'crypto';
+import {existsSync, readFileSync, writeFileSync} from 'fs';
 import {join} from 'path';
 import {rsaKeyManager} from './rsa-keys.js';
+import {ApiKeyStore, apiKeyStore, maskToken, normalizeScope} from './api-key-store.js';
 import logger from '../../utils/logger.js';
 import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 const GATEWAY_DIR = '.gateway';
-const GATEWAY_TOKEN_FILE = 'gateway_token.json';
+export {ApiKeyStore, GATEWAY_DIR};
 
 /**
  * 十六进制摘要的常量时间比较，消除计时侧信道。
@@ -37,17 +38,24 @@ export {timingSafeEqualHex as _timingSafeEqualHex};
 // 缓存的配置值
 let adminUsername = 'admin';
 let adminPasswordHash = null;
-let gatewayToken = null;
-let gatewayTokenHash = null;
-let gatewayTokenPrefix = null;
+let store = apiKeyStore;
 let _initialized = false;
 
 /**
- * 生成网关令牌（格式：sk-xxx）
- * @returns {string}
+ * 当前使用的 Key 存储（测试可替换）
+ * @returns {ApiKeyStore}
  */
-function generateGatewayToken() {
-    return 'sk-' + randomBytes(16).toString('hex');
+function keyStore() {
+    return store;
+}
+
+/**
+ * 取磁盘顺序上的第一条 Key
+ * 面板、指南、copilot/relay 的展示都按它来，语义是「默认 Key」
+ * @returns {Object|null}
+ */
+function firstKey() {
+    return keyStore().list()[0] || null;
 }
 
 /**
@@ -72,75 +80,11 @@ function _loadAdminCredentials() {
 }
 
 /**
- * 加载或生成网关令牌
- * 支持持久化：若文件已存在且包含有效 token_hash，从文件加载
- * 不再支持环境变量配置，统一自动生成
- */
-function _loadGatewayToken() {
-    const baseDir = join(process.cwd(), GATEWAY_DIR);
-    const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
-
-    if (!existsSync(baseDir)) {
-        mkdirSync(baseDir, {recursive: true});
-    }
-
-    // 尝试从文件加载已有令牌
-    if (existsSync(tokenFile)) {
-        try {
-            const data = JSON.parse(readFileSync(tokenFile, 'utf8'));
-            if (data.token_hash) {
-                gatewayTokenHash = data.token_hash;
-                gatewayTokenPrefix = data.token_prefix || 'sk-****';
-                gatewayToken = data.token_plain || null;
-                logger.info('Gateway token loaded from file');
-                return;
-            }
-        } catch (err) {
-            logger.error('Failed to load gateway token file:', err.message);
-        }
-    }
-
-    // 首次运行或文件损坏，生成新令牌
-    gatewayToken = generateGatewayToken();
-    gatewayTokenHash = createHash('sha256').update(gatewayToken).digest('hex');
-    gatewayTokenPrefix = gatewayToken.substring(0, 12) + '****';
-
-    _saveGatewayToken();
-
-    logger.info('========================================');
-    logger.info('  Gateway token auto-generated');
-    logger.info(`  Token: ${gatewayToken}`);
-    logger.info('  Please save this token, it will not be shown again.');
-    logger.info('========================================');
-}
-
-/**
- * 保存网关令牌到文件
- */
-function _saveGatewayToken() {
-    const baseDir = join(process.cwd(), GATEWAY_DIR);
-    const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
-
-    writeFileSync(
-        tokenFile,
-        JSON.stringify(
-            {
-                token_hash: gatewayTokenHash,
-                token_prefix: gatewayTokenPrefix,
-                token_plain: gatewayToken,
-                created_at: new Date().toISOString()
-            },
-            null,
-            2
-        ),
-        'utf8'
-    );
-}
-
-/**
  * 初始化鉴权配置
+ * @param {Object} [opts]
+ * @param {string} [opts.gatewayDir] - 覆盖 `.gateway` 目录（测试用）
  */
-export function initGatewayAuth() {
+export function initGatewayAuth(opts = {}) {
     if (_initialized) return;
 
     // 确保 RSA 密钥对已初始化
@@ -149,8 +93,9 @@ export function initGatewayAuth() {
     // 加载或生成管理员凭证
     _loadAdminCredentials();
 
-    // 加载或生成网关令牌
-    _loadGatewayToken();
+    // 加载多 Key 存储（内部完成旧单令牌文件的迁移）
+    store = opts.gatewayDir ? new ApiKeyStore(opts.gatewayDir) : apiKeyStore;
+    store.init();
 
     _initialized = true;
 }
@@ -271,27 +216,37 @@ export function reloadAdminCredentialsFromSync(username, passwordHash) {
 }
 
 /**
- * 网关令牌认证是否启用
+ * 网关鉴权是否启用
+ * 只要至少有一条 Key 就启用；Key 列表永不为空（删除最后一条被拒绝）
  * @returns {boolean}
  */
 export function isGatewayAuthEnabled() {
-    return gatewayTokenHash !== null;
+    return keyStore().list().length > 0;
 }
 
 /**
- * 获取网关令牌哈希（供各 store 透传使用）
+ * 获取默认 Key 的哈希（供各 store 透传使用）
  * @returns {string|null}
  */
 export function getGatewayTokenHash() {
-    return gatewayTokenHash;
+    return firstKey()?.token_hash || null;
 }
 
 /**
- * 获取网关令牌前缀（用于日志显示）
+ * 获取默认 Key 的前缀（用于日志显示）
  * @returns {string|null}
  */
 export function getGatewayTokenPrefix() {
-    return gatewayTokenPrefix;
+    return firstKey()?.token_prefix || null;
+}
+
+/**
+ * 按明文令牌解析出 Key 记录
+ * @param {string} token
+ * @returns {{id: string, label: string, allowedCredentialFiles: null|string[]}|null}
+ */
+export function resolveGatewayKey(token) {
+    return keyStore().resolve(token);
 }
 
 /**
@@ -348,20 +303,19 @@ export function verifyAdminCredentials(username, encryptedPassword) {
 
 /**
  * 验证网关令牌
+ * 只回 boolean：多 Key 后调用方（如 WS 升级）不需要知道是哪条 Key，
+ * 需要作用域的地方用 resolveGatewayKey。
  * @param {string} token - 客户端提供的令牌
  * @returns {boolean}
  */
 export function verifyGatewayToken(token) {
-    if (!isGatewayAuthEnabled()) return false;
-    if (typeof token !== 'string' || !token) return false;
-    const hash = createHash('sha256').update(token).digest('hex');
-    return timingSafeEqualHex(hash, gatewayTokenHash);
+    return resolveGatewayKey(token) !== null;
 }
 
 /**
  * 从请求头提取并验证网关令牌
  * @param {object} headers - HTTP 请求头
- * @returns {{authenticated: boolean, error?: string}}
+ * @returns {{authenticated: boolean, key?: Object, error?: string}}
  */
 export function authenticateGatewayRequest(headers) {
     if (!isGatewayAuthEnabled()) {
@@ -382,76 +336,116 @@ export function authenticateGatewayRequest(headers) {
         return {authenticated: false, error: 'Missing API key. Set Authorization: Bearer <token>'};
     }
 
-    if (!verifyGatewayToken(token)) {
+    const key = resolveGatewayKey(token);
+    if (!key) {
         logger.warn('Gateway authentication failed: invalid token');
         return {authenticated: false, error: 'Invalid gateway token'};
     }
 
-    return {authenticated: true};
+    return {authenticated: true, key};
 }
 
 /**
- * 获取网关令牌信息（供前端管理页面使用）
+ * 获取默认 Key 的信息（供前端管理页面使用）
  * @returns {{prefix: string, hash: string, key: string|null, apiKeyPlain: string|null}}
  */
 export function getGatewayApiKeyInfo() {
+    const key = firstKey();
     return {
-        prefix: gatewayTokenPrefix,
-        hash: gatewayTokenHash,
-        key: gatewayToken,
-        apiKeyPlain: gatewayToken
+        prefix: key?.token_prefix || 'sk-****',
+        hash: key?.token_hash || null,
+        key: key?.token_plain || null,
+        apiKeyPlain: key?.token_plain || null
     };
 }
 
 /**
- * 重新生成网关令牌
- * 影响所有端点鉴权，调用后旧令牌立即失效
- * @returns {string} 新生成的令牌明文
+ * 列出全部 Key（面板用）
+ * @returns {Array<{id, label, prefix, plain, createdAt, allowedCredentialFiles}>}
+ */
+export function listGatewayApiKeys() {
+    return keyStore().list().map((k) => ({
+        id: k.id,
+        label: k.label,
+        prefix: k.token_prefix,
+        plain: k.token_plain,
+        createdAt: k.created_at,
+        allowedCredentialFiles: k.allowed_credential_files ?? null
+    }));
+}
+
+/**
+ * 新建 Key
+ * @param {Object} [opts]
+ * @returns {Object}
+ */
+export function createGatewayApiKey(opts) {
+    const created = keyStore().create(opts);
+    broadcast('gateway-api-keys-changed').catch(() => {});
+    return created;
+}
+
+/**
+ * 更新 Key（label / 允许的 CodeBuddy 账号）
+ * @param {string} id
+ * @param {Object} patch
+ * @returns {Object|null}
+ */
+export function updateGatewayApiKey(id, patch) {
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'allowedCredentialFiles')) {
+        // 走一遍清洗，把非法文件名挡在存储层之前
+        patch = {...patch, allowedCredentialFiles: normalizeScope(patch.allowedCredentialFiles)};
+    }
+    const updated = keyStore().update(id, patch);
+    if (updated) broadcast('gateway-api-keys-changed').catch(() => {});
+    return updated;
+}
+
+/**
+ * 删除 Key
+ * @param {string} id
+ * @returns {{ok: boolean, error?: string}}
+ */
+export function deleteGatewayApiKey(id) {
+    const result = keyStore().remove(id);
+    if (result.ok) broadcast('gateway-api-keys-changed').catch(() => {});
+    return result;
+}
+
+/**
+ * 重置指定 Key 的明文
+ * @param {string} id
+ * @returns {Object|null}
+ */
+export function regenerateApiKey(id) {
+    const updated = keyStore().regenerate(id);
+    if (updated) broadcast('gateway-api-keys-changed').catch(() => {});
+    return updated;
+}
+
+/**
+ * 重置默认（第一条）Key，兼容三个面板既有的「重置 API Key」按钮
+ * @returns {string|null} 新明文
  */
 export function regenerateGatewayToken() {
-    gatewayToken = generateGatewayToken();
-    gatewayTokenHash = createHash('sha256').update(gatewayToken).digest('hex');
-    gatewayTokenPrefix = gatewayToken.substring(0, 12) + '****';
-
-    _saveGatewayToken();
-
+    const result = keyStore().regenerateFirst();
+    if (!result) return null;
     logger.info('Gateway token regenerated');
-
-    // 广播到其他 worker 同步令牌
-    broadcast('gateway-token-regenerated').catch(() => {});
-
-    return gatewayToken;
+    broadcast('gateway-api-keys-changed').catch(() => {});
+    return result.token;
 }
 
 /**
- * 从文件重新加载网关令牌（多进程同步用）
- * 仅从文件读取，不生成新令牌
+ * 从文件重新加载 Key 列表（多进程同步用）
  */
 export function reloadGatewayToken() {
-    _reloadGatewayToken();
+    keyStore().reload();
 }
+
+/** 别名：语义更清晰的同义入口 */
+export const reloadGatewayApiKeys = reloadGatewayToken;
 
 /**
- * 内部实现：从文件重新加载网关令牌
+ * 掩码工具透出（面板侧统一口径）
  */
-function _reloadGatewayToken() {
-    const baseDir = join(process.cwd(), GATEWAY_DIR);
-    const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
-
-    if (!existsSync(tokenFile)) {
-        logger.warn('Gateway token file not found during reload');
-        return;
-    }
-
-    try {
-        const data = JSON.parse(readFileSync(tokenFile, 'utf8'));
-        if (data.token_hash) {
-            gatewayTokenHash = data.token_hash;
-            gatewayTokenPrefix = data.token_prefix || 'sk-****';
-            gatewayToken = data.token_plain || null;
-            logger.info('Gateway token reloaded from file (cluster sync)');
-        }
-    } catch (err) {
-        logger.error('Failed to reload gateway token:', err.message);
-    }
-}
+export {maskToken};

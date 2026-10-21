@@ -585,14 +585,16 @@
                 color: #374151;
             }
             .guide-model-table th:nth-child(1) {
-                width: 42%;
+                width: 38%;
             }
             .guide-model-table th:nth-child(2) {
-                width: 34%;
+                width: 32%;
             }
+            /* 最后两列（倍率、可用性）居中且等宽：四列表格里
+               nth-last-child 比 nth-child 更稳，加列时不用改这里 */
             .guide-model-table th:nth-last-child(-n+2) {
                 text-align: center;
-                width: 12%;
+                width: 15%;
             }
             .guide-model-table td {
                 padding: 5px 10px;
@@ -657,14 +659,56 @@
 
         <div id="toast" class="toast"></div>
 
+        <!-- 模型可用性测试弹窗：逐条显示每个模型的探测结果 -->
+        <div id="modelTestModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;z-index:1000;">
+            <div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:720px;width:94%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+                <h3 id="modelTestTitle" style="margin:0 0 6px;font-size:1.05rem;color:#374151;"></h3>
+                <p id="modelTestSubtitle" style="margin:0 0 12px;font-size:0.8rem;color:#6b7280;"></p>
+                <div id="modelTestProgress" style="height:4px;background:#e5e7eb;border-radius:2px;margin-bottom:12px;overflow:hidden;">
+                    <div id="modelTestProgressBar" style="height:100%;width:0;background:#667eea;transition:width 0.2s;"></div>
+                </div>
+                <div id="modelTestBody" style="flex:1;overflow:auto;min-height:120px;"></div>
+                <div id="modelTestSummary" style="margin-top:12px;font-size:0.85rem;color:#374151;"></div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;align-items:center;">
+                    <span id="modelTestCostHint" style="margin-right:auto;font-size:0.78rem;color:#6b7280;"></span>
+                    <button class="btn btn-secondary" onclick="closeModelTest()">关闭</button>
+                    <button class="btn btn-primary" id="modelTestStartBtn" style="display:none;" onclick="startModelTest()">开始测试</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 账号权限弹窗：勾选这个 API Key 能使用哪些 CodeBuddy 账号 -->
+        <div id="keyScopeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;z-index:1000;">
+            <div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:560px;width:92%;max-height:82vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+                <h3 id="keyScopeTitle" style="margin:0 0 14px;font-size:1.05rem;color:#374151;"></h3>
+                <div id="keyScopeBody"></div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+                    <button class="btn btn-secondary" onclick="closeKeyScopeModal()">取消</button>
+                    <button class="btn btn-primary" onclick="saveKeyScope()">保存</button>
+                </div>
+            </div>
+        </div>
+
         <script>
             const API_BASE = '/codebuddyFE';
             let currentAuthState = null;
             let pollInterval = null;
             let manualSelectedIndex = null;
-            let apiKeyVisible = false;
             let apiKeyPlain = '';
             let apiKeyMasked = '';
+            /** @type {Array<Object>} 面板展示用的 Key 列表 */
+            let apiKeys = [];
+            /** @type {Set<string>} 明文展开状态（按 key id） */
+            const apiKeyRevealed = new Set();
+            let totalCredentials = 0;
+            let editingKeyId = null;
+            /** 当前正在测试的账号索引 / 取消句柄 */
+            let modelTestIndex = null;
+            let modelTestAbort = null;
+            /** 当前账号可测的模型清单（弹窗打开时拉一次，只读不计费） */
+            let modelTestModels = [];
+            /** 成长中心数据（只有猫猫旅行状态），合并进积分板块展示 */
+            let growthCache = [];
             let currentMonth = '';
             let apiCallsChartInstance = null;
             let tokensChartInstance = null;
@@ -700,6 +744,7 @@
                     });
 
                     loadCredentials();
+                    loadApiKeys();
                     refreshBilling();
                     loadModels();
                     startStatsAutoRefresh();
@@ -1055,7 +1100,6 @@
             function renderTenantPage(data) {
                 apiKeyMasked = data.apiKeyPrefix || '****';
                 apiKeyPlain = data.apiKeyPlain || '';
-                apiKeyVisible = false;
                 document.getElementById('mainContent').innerHTML = `
                 <div class="card">
                     <h2>添加凭证</h2>
@@ -1105,18 +1149,6 @@
 
                 <div class="card">
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-                        <h2 style="margin-bottom:0;">成长中心 <span style="font-size:0.7rem;color:#8b949e;font-weight:400;">连登 · 猫猫旅行 · 抽奖（仅国内个人站）</span></h2>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <button class="btn btn-primary btn-small" onclick="refreshGrowth()">刷新状态</button>
-                        </div>
-                    </div>
-                    <div id="growthList">
-                        <div class="empty-state"><p>点击「刷新状态」查询成长中心</p></div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <h2>积分与签到</h2>
                         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                             <label style="font-size:0.85rem;color:#6b7280;display:flex;align-items:center;gap:4px;" title="默认开启：每次启动项目时自动签到并执行成长日常。取消勾选可关闭。">
@@ -1133,15 +1165,12 @@
                 </div>
 
                 <div class="card">
-                    <h2>API Key <span style="font-size:0.7em;color:#58a6ff;font-weight:400;">所有端点共用</span></h2>
-                    <div class="api-key-display">
-                        <span id="apiKeyText" class="api-key-text">${apiKeyMasked}</span>
-                        <div class="api-key-actions">
-                            <button class="btn-icon" onclick="toggleApiKeyVisibility()" id="toggleKeyBtn" title="显示/隐藏">👁</button>
-                            <button class="btn-icon" onclick="copyApiKey()" id="copyKeyBtn" title="复制">📋</button>
-                            <button class="btn-icon" onclick="resetApiKey()" id="resetKeyBtn" title="重置">🔄</button>
-                        </div>
-                    </div>
+                    <h2>
+                        API Keys
+                        <span style="font-size:0.7em;color:#58a6ff;font-weight:400;">CodeBuddy 按 Key 限定账号；Copilot / Relay 只校验 Key 有效性</span>
+                        <button class="btn btn-primary btn-small" style="margin-left:auto;" onclick="createApiKey()">+ 新建 Key</button>
+                    </h2>
+                    <div id="apiKeysList"><div class="empty-state"><p>加载中…</p></div></div>
                 </div>
 
                 <div class="card">
@@ -1419,9 +1448,10 @@
                                     !cred.isDisabled &&
                                     !cred.isExpired &&
                                     !cred.isRateLimited &&
-                                    (cred.priorityRank >= 0
-                                        ? isTop
-                                        : cred.index === manualSelectedIndex);
+                                    (cred.isOnlyRoutable ||
+                                        (cred.priorityRank >= 0
+                                            ? isTop
+                                            : cred.index === manualSelectedIndex));
                                 let itemClass = cred.isDomainBlocked
                                     ? 'domain-blocked'
                                     : cred.isDisabled
@@ -1453,6 +1483,19 @@
                                         ? '<button class="btn btn-secondary btn-small" onclick="resetCredentialRateLimit(' +
                                           cred.index +
                                           ')">重置状态</button>'
+                                        : '';
+                                // 测试模型：逐个模型发一次最小请求，只读探测，不影响调度
+                                //
+                                // 只传下标，不传账号名：账号名来自上游，可能含引号，
+                                // 塞进 onclick 的字符串字面量里很容易把属性截断
+                                // （之前用 JSON.stringify 就踩了这个坑：它产出双引号，
+                                // 和 onclick="..." 的双引号冲突，按钮能渲染但点了没反应）。
+                                // 名字由后端在 start 事件里回传，面板再显示。
+                                const testBtn =
+                                    !cred.isDomainBlocked && !cred.isExpired
+                                        ? '<button class="btn btn-secondary btn-small" onclick="openModelTest(' +
+                                          cred.index +
+                                          ')" title="对这个账号逐个测试模型可用性">测试模型</button>'
                                         : '';
                                 const activeTag =
                                     isActive && !cred.isDomainBlocked
@@ -1491,6 +1534,7 @@
                                 </div>
                             </div>
                             <div style="display: flex; gap: 6px;">
+                                ${testBtn}
                                 ${topBtn}
                                 ${resetBtn}
                                 ${toggleBtn}
@@ -1636,9 +1680,14 @@
                 const list = document.getElementById('billingList');
                 list.innerHTML = '<div class="empty-state"><p>查询中... <span class="loading"></span></p></div>';
                 try {
-                    const response = await fetch('/codebuddyFE/billing/status');
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || '查询失败');
+                    // 成长数据和积分一起拉：猫猫旅行要显示在同一个账号条目里，
+                    // 分两次串行会先画一遍再跳一下。并发拉，谁失败都不影响另一个。
+                    const [billingResp] = await Promise.all([
+                        fetch('/codebuddyFE/billing/status'),
+                        refreshGrowth()
+                    ]);
+                    const data = await billingResp.json();
+                    if (!billingResp.ok) throw new Error(data.error || '查询失败');
                     renderBilling(data.accounts || []);
                     // 同步启动自动签到开关
                     const toggle = document.getElementById('startupCheckinToggle');
@@ -1669,7 +1718,7 @@
                         ? '<div style="margin-top:8px;padding:8px 10px;background:#ecfdf5;border-left:3px solid #10b981;border-radius:4px;">' +
                           '<strong>当前已在系统计划任务中运行</strong><br>' +
                           '签到任务：' + (checkin && checkin.registered ? '已注册' : '未注册') +
-                          '　成长任务：' + (growth && growth.registered ? '已注册' : '未注册') +
+                          '　成长日常：' + (growth && growth.registered ? '已注册' : '未注册') +
                           (checkin && checkin.nextRunTime ? '<br>下次运行：' + checkin.nextRunTime : '') +
                           '</div>'
                         : '';
@@ -1706,7 +1755,7 @@
                         '<li style="margin-bottom:10px;">' +
                         '看到下面这两行就表示成功：<br>' +
                         '<code style="' + codeStyle + 'color:#7ee787;">[签到任务] 已注册（每天 08:05）</code><br>' +
-                        '<code style="' + codeStyle + 'color:#7ee787;">[成长任务] 已注册（每天 09:05 / 13:05 / 19:05 / 21:00）</code>' +
+                        '<code style="' + codeStyle + 'color:#7ee787;">[成长日常] 已注册（每天 09:05 / 13:05 / 19:05 / 21:00）</code>' +
                         '</li>' +
 
                         '<li style="margin-bottom:10px;">' +
@@ -1916,12 +1965,17 @@
                                       ' 积分  ·  已花 ' + Number(a.used || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
                                       ' 积分  ·  本月累计领取 ' + Number(a.capacity).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
                                       ' 积分';
+                            // 成长中心数据按 userId 对上：只有国内个人站才有，
+                            // 国际站/企业站查不到就自然不显示这一行
+                            const growth = growthCache.find((g) => g && g.supported !== false && g.userId === a.userId);
+                            const growthHtml = growth && !growth.error ? travelLine(growth) : '';
                             return `
                         <li class="credential-item">
                             <div class="credential-info">
                                 <h4>${a.email || a.userId} ${checkinTag}${expiryBadgeHtml(a.soonestExpiry)}</h4>
                                 <p>${numbers}${staleTag}</p>
                                 ${quotaBarHtml(a.used, a.capacity)}
+                                ${growthHtml}
                                 ${errorLine}
                             </div>
                         </li>
@@ -1974,136 +2028,49 @@
                 }
             }
 
-            // ========== 成长中心 ==========
+            // ========== 成长中心：只保留猫猫旅行 ==========
+            // 已去掉的三块，都是「永远显示同一个值」的装饰，占着位置反而让人以为坏了：
+            // - 连登天数：按官方客户端的对话活跃累计，代理不代报活跃，天数永远不动
+            // - 抽奖次数：要先兑换档位才有，实际一直是 0
+            // - 成长任务：5 个任务由上游按账号行为判定，没有逐项状态、没有提交端点
+            //   （实测 tasks/claim 等均 404），代理侧无法触发任何一项
             async function refreshGrowth() {
-                const list = document.getElementById('growthList');
-                list.innerHTML = '<div class="empty-state"><p>查询中... <span class="loading"></span></p></div>';
                 try {
                     const response = await fetch('/codebuddyFE/growth/status');
                     const data = await response.json();
                     if (!response.ok) throw new Error(data.error || '查询失败');
-                    renderGrowth(data.accounts || []);
-                } catch (error) {
-                    list.innerHTML = '<div class="empty-state"><p>查询失败: ' + error.message + '</p></div>';
+                    growthCache = data.accounts || [];
+                } catch {
+                    // 成长数据是附加信息，拿不到就不显示，不影响积分板块
+                    growthCache = [];
                 }
             }
 
-            function renderGrowth(accounts) {
-                const list = document.getElementById('growthList');
-                if (!accounts || accounts.length === 0) {
-                    list.innerHTML = '<div class="empty-state"><p>暂无国内个人站凭证</p></div>';
-                    return;
-                }
+            /**
+             * 猫猫旅行一行：状态 + 今日名额 + 「执行一次」
+             *
+             * 按钮挂在这一行而不是账号条目右侧：「执行一次」动的就是猫猫旅行
+             * （领礼物 / 派出门），外加连登档位兑换和抽奖。
+             */
+            function travelLine(a) {
+                const t = a.travel || {};
+                const map = {idle: '在家', traveling: '旅行中', arrived: '已到站待领取', unknown: '未知'};
+                const state = map[t.state] || t.state || '未知';
+                let hint = '派它出去旅行，几小时后带回礼物';
+                if (t.state === 'arrived') hint = '礼物已带回，点「执行一次」领取';
+                else if (t.state === 'traveling') hint = '正在旅行，到站后带回礼物需手动领取';
+                else if (t.dailyLimitReached) hint = '今日派出名额已用完，明天再来';
 
-                // 小卡片的统一外观：标题 + 一行说明 + 当前状态
-                const panel = (title, hint, value, badge) =>
-                    '<div style="flex:1 1 150px;min-width:150px;padding:8px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">' +
-                    '<div style="font-size:0.75rem;color:#6b7280;">' + title + '</div>' +
-                    '<div style="font-size:0.95rem;font-weight:600;color:#1f2937;margin:2px 0;">' + value + '</div>' +
-                    '<div style="font-size:0.72rem;color:#9ca3af;line-height:1.4;">' + hint + '</div>' +
-                    (badge || '') +
-                    '</div>';
+                const color =
+                    t.state === 'arrived' ? '#f59e0b' : t.state === 'traveling' ? '#3b82f6' : t.dailyLimitReached ? '#9ca3af' : '#10b981';
+                const tag = '<span style="display:inline-block;font-size:0.7rem;padding:1px 7px;border-radius:9px;background:' +
+                    color + ';color:#fff;margin-left:6px;">' + state + '</span>';
 
-                const badge = (text, color) =>
-                    '<div style="margin-top:4px;display:inline-block;font-size:0.7rem;padding:1px 7px;border-radius:9px;background:' +
-                    color + ';color:#fff;">' + text + '</div>';
-
-                list.innerHTML =
-                    '<ul class="credential-list">' +
-                    accounts
-                        .map((a) => {
-                            if (a.supported === false) {
-                                return `<li class="credential-item disabled"><div class="credential-info"><h4>${a.userId}</h4><p>${a.reason || '不支持'}</p></div></li>`;
-                            }
-                            if (a.error) {
-                                return `<li class="credential-item expired"><div class="credential-info"><h4>${a.userId}</h4><p>查询失败: ${a.error}</p></div></li>`;
-                            }
-
-                            const s = a.streak || {};
-                            const t = a.travel || {};
-                            const tasks = a.tasks || {};
-                            const days = s.days || 0;
-                            const chances = a.lotteryChances ?? 0;
-
-                            // 连登：说清"连登 ≠ 签到"。连登由成长中心活跃热力决定，
-                            // 只有当天有对话活跃才计一天；签到发的是积分，两套体系互不影响。
-                            // 代理不替客户端上报活跃，所以 days=0 时不该显示"还差 N 天"——
-                            // 那个进度在代理场景下永远不会前进，属于虚假承诺。
-                            const nextGap = s.nextTierRemaining || 0;
-                            const streakHint = days > 0
-                                ? (s.nextTier
-                                    ? '连登可换积分/抽奖次数，距 ' + s.nextTier + ' 还差 ' + nextGap + ' 天'
-                                    : '连登可换积分/抽奖次数')
-                                : '连登按官方客户端的对话活跃累计，代理不代报';
-                            const redeemable = (s.tiers || []).filter((x) => x.status !== 'locked' && x.status !== 'claimed');
-                            const streakBadge = redeemable.length
-                                ? badge(redeemable.length + ' 档可兑换', '#8b5cf6')
-                                : '';
-
-                            // 猫猫：说清"派出去几小时后带礼物回来，礼物要手动领"
-                            const travelStateMap = {idle: '在家', traveling: '旅行中', arrived: '已到站待领取', unknown: '未知'};
-                            const travelState = travelStateMap[t.state] || t.state || '未知';
-                            const travelHint =
-                                t.state === 'arrived'
-                                    ? '礼物已带回，点「执行一次」领取'
-                                    : t.state === 'traveling'
-                                      ? '正在旅行，到站后带回礼物需手动领取'
-                                      : t.dailyLimitReached
-                                        ? '今日派出名额已用完，明天再来'
-                                        : '派它出去旅行，几小时后带回礼物';
-                            const travelBadge =
-                                t.state === 'arrived'
-                                    ? badge('待领取', '#f59e0b')
-                                    : t.state === 'traveling'
-                                      ? badge('旅行中', '#3b82f6')
-                                      : t.dailyLimitReached
-                                        ? badge('今日已用完', '#9ca3af')
-                                        : badge('可派出', '#10b981');
-
-                            // 抽奖：说清"有次数就能抽"
-                            const lotteryHint = chances > 0 ? '有次数，点「执行一次」抽完' : '暂无抽奖次数（兑换档位可得）';
-                            const lotteryBadge = chances > 0 ? badge(chances + ' 次可抽', '#ec4899') : '';
-
-                            // 任务：用进度条直观表达完成度
-                            const total = tasks.total || 0;
-                            const done = tasks.completed || 0;
-                            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-                            const bar =
-                                '<div style="margin-top:5px;height:5px;background:#e5e7eb;border-radius:3px;overflow:hidden;">' +
-                                '<div style="width:' + pct + '%;height:100%;background:' + (tasks.maxLevel ? '#10b981' : '#3b82f6') + ';"></div>' +
-                                '</div>';
-
-                            // 汇总"今天还有没有事可做"
-                            const pending = [];
-                            if (redeemable.length) pending.push('兑换 ' + redeemable.length + ' 档');
-                            if (t.state === 'arrived') pending.push('领礼物');
-                            else if (t.state === 'idle' && !t.dailyLimitReached) pending.push('派猫');
-                            if (chances > 0) pending.push('抽奖 ' + chances + ' 次');
-                            const summary = pending.length
-                                ? '<span style="color:#f59e0b;">今日待办：' + pending.join('、') + '</span>'
-                                : '<span style="color:#10b981;">今日暂无待办</span>';
-
-                            return `<li class="credential-item" style="align-items:flex-start;">
-                                <div class="credential-info" style="width:100%;">
-                                    <h4>${a.userId}
-                                        <span style="font-size:0.72rem;font-weight:400;color:#6b7280;margin-left:8px;">${summary}</span>
-                                    </h4>
-                                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-                                        ${panel('连登天数', streakHint, days + ' 天', streakBadge)}
-                                        ${panel('猫猫旅行', travelHint, travelState, travelBadge)}
-                                        ${panel('抽奖次数', lotteryHint, chances + ' 次', lotteryBadge)}
-                                        ${panel('成长任务', tasks.maxLevel ? '已达最高等级' : '完成任务提升等级', done + ' / ' + total, bar)}
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 6px; flex-shrink:0; margin-left:10px; margin-right:-16px;">
-                                    <button class="btn btn-primary btn-small" onclick="runGrowthOne('${(a.userId || '').replace(/'/g, "\\'")}')">执行一次</button>
-                                </div>
-                            </li>`;
-                        })
-                        .join('') +
-                    '</ul>' +
-                    '<div style="margin-top:8px;font-size:0.75rem;color:#9ca3af;line-height:1.6;">' +
-                    '「执行一次」会依次尝试：领取到站礼物 → 派出旅行 → 兑换已解锁档位 → 抽完次数。每个动作都先查状态，已完成的会自动跳过，可放心重复点。' +
+                return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.8rem;color:#6b7280;margin-top:6px;">' +
+                    '<span>猫猫旅行' + tag + '</span>' +
+                    '<span style="color:#9ca3af;">' + escapeHtml(hint) + '</span>' +
+                    '<button class="btn btn-secondary btn-small" style="padding:1px 8px;font-size:0.72rem;" ' +
+                    'onclick="runGrowthOne(\'' + escapeHtml(String(a.userId || '').replace(/'/g, "\\'")) + '\')">执行一次</button>' +
                     '</div>';
             }
 
@@ -2122,7 +2089,8 @@
                         if (data.depart && data.depart.action === 'departed') parts.push('派猫');
                         if (data.streak && data.streak.message) parts.push(data.streak.message);
                         showToast(parts.length ? '已完成: ' + parts.join('，') : '本日已无待办动作');
-                        refreshGrowth();
+                        await refreshGrowth();
+                        refreshBilling();
                     } else {
                         showToast(data.error || '执行失败', 'error');
                     }
@@ -2180,16 +2148,33 @@
                 let html = '';
                 for (const g of nonEmpty) {
                     const meta = REALM_META[g.realm] || {label: g.realm, host: ''};
+                    // 站点标题直接给「可用 / 总数」：用户最关心的是能用的有几个
+                    const total = g.models.length;
+                    const blockedN = g.models.filter((m) => m.blocked).length;
+                    const usableN = total - blockedN;
+                    const countText = blockedN > 0
+                        ? usableN + ' 个可用 / 共 ' + total + ' 个'
+                        : total + ' 个模型';
                     html += '<div class="model-realm">';
                     html += '<div class="realm-head">' +
                         '<strong>' + meta.label + '</strong>' +
-                        '<span>' + meta.host + ' · ' + g.models.length + ' 个模型</span>' +
+                        '<span>' + meta.host + ' · ' + countText + '</span>' +
                         '</div>';
+                    if (blockedN > 0) {
+                        // 只说明「没有权限」，不再让用户手动删缓存文件：
+                        // 重测成功的模型会自动改回可用（探测结果直接写回权限表）。
+                        html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;">' +
+                            '<p style="color:#b45309;font-size:0.82rem;">' +
+                            blockedN + ' 个模型当前账号没有权限（已灰显）。' +
+                            '这是根据实测结果判断的；升级套餐后点「测试模型」重测一次，' +
+                            '能用的会自动变回可用。' +
+                            '</p></div>';
+                    }
                     if (g.fromCache) {
                         html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#f59e0b;">上游拉取失败，显示该站点最近一次结果</p></div>';
                     }
                     if (g.error) {
-                        html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#ef4444;">' + g.error + '</p></div>';
+                        html += '<div class="empty-state" style="padding:6px 12px;margin-bottom:8px;"><p style="color:#ef4444;">' + escapeHtml(g.error) + '</p></div>';
                     }
 
                     // 按厂商分组
@@ -2206,12 +2191,29 @@
                         if (!list || list.length === 0) continue;
                         const label = vendorNames[vendor] || vendor;
                         html += '<div class="guide-step-title" style="margin-top: 12px;">' + label + '</div>';
-                        html += '<div class="guide-step-desc"><table class="guide-model-table"><thead><tr><th>模型</th><th>说明</th><th>倍率</th></tr></thead><tbody>';
+                        html += '<div class="guide-step-desc"><table class="guide-model-table"><thead><tr><th>模型</th><th>说明</th><th>倍率</th><th>可用性</th></tr></thead><tbody>';
                         for (const m of list) {
-                            html += '<tr>' +
-                                '<td><code>' + m.id + '</code></td>' +
-                                '<td>' + m.name + '</td>' +
+                            // 三种状态分开显示：
+                            // - 不可用（没权限 / 模型不存在）：灰显
+                            // - 今日额度用完：正常显示，只在可用性列写一句，不标灰
+                            //   （那只是今天用超了，明天照常，标灰会让人以为模型坏了）
+                            // - 可用
+                            const rowStyle = m.blocked ? ' style="opacity:0.55;"' : '';
+                            let availability;
+                            if (m.blocked) {
+                                availability = '<span style="color:#dc2626;font-size:0.78rem;" title="' +
+                                    escapeHtml(m.blockedReason || '') + '">不可用</span>';
+                            } else if (m.quotaNote) {
+                                availability = '<span style="color:#b45309;font-size:0.75rem;" title="' +
+                                    escapeHtml(m.quotaNote) + '">今日额度用完</span>';
+                            } else {
+                                availability = '<span style="color:#059669;font-size:0.78rem;">可用</span>';
+                            }
+                            html += '<tr' + rowStyle + '>' +
+                                '<td><code>' + escapeHtml(m.id) + '</code></td>' +
+                                '<td>' + escapeHtml(m.name) + '</td>' +
                                 '<td>' + fmtRate(m.creditsValue) + '</td>' +
+                                '<td>' + availability + '</td>' +
                                 '</tr>';
                         }
                         html += '</tbody></table></div>';
@@ -2316,49 +2318,678 @@
                 }
             }
 
-            function toggleApiKeyVisibility() {
-                apiKeyVisible = !apiKeyVisible;
-                const textEl = document.getElementById('apiKeyText');
-                const btn = document.getElementById('toggleKeyBtn');
-                if (apiKeyVisible && apiKeyPlain) {
-                    textEl.textContent = apiKeyPlain;
-                    btn.textContent = '🙈';
-                } else {
-                    textEl.textContent = apiKeyMasked;
-                    btn.textContent = '👁';
-                    apiKeyVisible = false;
+            /**
+             * 把动态文本转义后再拼进 innerHTML。
+             * label 是用户输入，email/userId/baseUrl 来自上游，不转义就是存储型 XSS。
+             */
+            function escapeHtml(value) {
+                return String(value === null || value === undefined ? '' : value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            /**
+             * 加载并渲染 Key 列表
+             * 每条 Key 的账号作用域：unrestricted=true 表示不限（显示「全部账号」）
+             */
+            async function loadApiKeys() {
+                const container = document.getElementById('apiKeysList');
+                if (!container) return;
+                try {
+                    const response = await fetch(API_BASE + '/api-keys');
+                    const data = await response.json();
+                    apiKeys = Array.isArray(data.keys) ? data.keys : [];
+                    totalCredentials = data.totalCredentials || 0;
+                    renderApiKeys();
+                } catch (error) {
+                    container.innerHTML = '<div class="empty-state"><p>加载 Key 列表失败：' + escapeHtml(error.message) + '</p></div>';
                 }
             }
 
-            async function copyApiKey() {
-                const keyToCopy = apiKeyPlain || apiKeyMasked;
-                if (!keyToCopy || keyToCopy === '****') {
+            function renderApiKeys() {
+                const container = document.getElementById('apiKeysList');
+                if (!container) return;
+                if (!apiKeys.length) {
+                    container.innerHTML = '<div class="empty-state"><p>还没有 API Key</p></div>';
+                    return;
+                }
+                container.innerHTML = apiKeys
+                    .map((key, idx) => {
+                        const revealed = apiKeyRevealed.has(key.id);
+                        const shown = revealed ? key.plain || key.prefix : key.prefix;
+                        // 第一条是默认 Key：Copilot / Relay 面板展示与使用指南都用它
+                        const defaultTag =
+                            idx === 0
+                                ? '<span style="background:#667eea;color:#fff;font-size:0.68rem;padding:2px 8px;border-radius:10px;margin-left:6px;">默认</span>'
+                                : '';
+                        const scopeText = key.unrestricted
+                            ? '<span style="color:#059669;">全部账号</span>'
+                            : '<span style="color:#b45309;">限 ' + key.allowedCount + ' / ' + totalCredentials + ' 个账号</span>';
+                        const missingTag =
+                            Array.isArray(key.allowedMissing) && key.allowedMissing.length
+                                ? '<span style="color:#dc2626;font-size:0.76rem;margin-left:8px;">' +
+                                  key.allowedMissing.length +
+                                  ' 个已删除的账号仍在白名单里，建议重新勾选</span>'
+                                : '';
+                        return `
+                        <div class="api-key-row" data-key-id="${escapeHtml(key.id)}" style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+                            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                                <strong style="font-size:0.95rem;">${escapeHtml(key.label)}</strong>${defaultTag}
+                                <span style="font-size:0.78rem;color:#6b7280;">${scopeText}</span>${missingTag}
+                            </div>
+                            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+                                <code style="flex:1;min-width:220px;background:#f1f5f9;border-radius:6px;padding:6px 10px;word-break:break-all;font-size:0.82rem;">${escapeHtml(shown)}</code>
+                                <div style="display:flex;gap:6px;flex-shrink:0;">
+                                    <button class="btn-icon" onclick="toggleKeyVisibility('${escapeHtml(key.id)}')" title="显示/隐藏">${revealed ? '🙈' : '👁'}</button>
+                                    <button class="btn-icon" onclick="copyKeyById('${escapeHtml(key.id)}')" title="复制">📋</button>
+                                    <button class="btn btn-secondary btn-small" onclick="renameApiKey('${escapeHtml(key.id)}')">改名</button>
+                                    <button class="btn btn-primary btn-small" onclick="openKeyScopeEditor('${escapeHtml(key.id)}')">账号权限</button>
+                                    <button class="btn btn-warning btn-small" onclick="resetApiKey('${escapeHtml(key.id)}')">重置</button>
+                                    <button class="btn btn-danger btn-small" onclick="deleteApiKey('${escapeHtml(key.id)}')">删除</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    })
+                    .join('');
+                // 指南里的 token 跟着第一条走，改名/重置后同步
+                if (apiKeys[0]) {
+                    apiKeyPlain = apiKeys[0].plain || '';
+                    apiKeyMasked = apiKeys[0].prefix || '****';
+                }
+                updateGuideConfig();
+            }
+
+            function findApiKey(id) {
+                return apiKeys.find((k) => k.id === id) || null;
+            }
+
+            function toggleKeyVisibility(id) {
+                if (apiKeyRevealed.has(id)) apiKeyRevealed.delete(id);
+                else apiKeyRevealed.add(id);
+                renderApiKeys();
+            }
+
+            async function copyKeyById(id) {
+                const key = findApiKey(id);
+                const text = key ? key.plain || key.prefix : '';
+                if (!text) {
                     showToast('无可复制的 API Key', 'error');
                     return;
                 }
                 try {
                     if (navigator.clipboard && window.isSecureContext) {
-                        await navigator.clipboard.writeText(keyToCopy);
+                        await navigator.clipboard.writeText(text);
                     } else {
                         const textarea = document.createElement('textarea');
-                        textarea.value = keyToCopy;
+                        textarea.value = text;
                         textarea.style.cssText = 'position:fixed;left:-9999px;opacity:0';
                         document.body.appendChild(textarea);
                         textarea.select();
                         document.execCommand('copy');
                         document.body.removeChild(textarea);
                     }
-                    const btn = document.getElementById('copyKeyBtn');
-                    btn.textContent = '✓';
-                    btn.classList.add('copy-success');
                     showToast('API Key 已复制');
-                    setTimeout(() => {
-                        btn.textContent = '📋';
-                        btn.classList.remove('copy-success');
-                    }, 2000);
                 } catch (error) {
-                    showToast('复制失败', 'error');
+                    showToast('复制失败: ' + error.message, 'error');
                 }
+            }
+
+            async function createApiKey() {
+                const label = (prompt('给这个 Key 起个名字（比如「Claude Code 本机」）', 'Key ' + (apiKeys.length + 1)) || '').trim();
+                if (label === '') {
+                    // prompt 被取消返回 null；用户主动清空也当作取消
+                    return;
+                }
+                try {
+                    const response = await fetch(API_BASE + '/api-keys', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({label})
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '新建失败');
+                    apiKeyRevealed.add(data.key.id);
+                    await loadApiKeys();
+                    showToast('已新建，明文已展开，复制后妥善保存');
+                } catch (error) {
+                    showToast('新建失败: ' + error.message, 'error');
+                }
+            }
+
+            async function renameApiKey(id) {
+                const key = findApiKey(id);
+                const next = prompt('新的名称', key ? key.label : '');
+                if (next === null || !next.trim()) return;
+                await patchApiKey(id, {label: next.trim()}, '已改名');
+            }
+
+            async function deleteApiKey(id) {
+                const key = findApiKey(id);
+                if (!confirm('删除「' + (key ? key.label : id) + '」？用它接入的客户端会立刻失效。')) return;
+                try {
+                    const response = await fetch(API_BASE + '/api-keys/delete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id})
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '删除失败');
+                    apiKeyRevealed.delete(id);
+                    await loadApiKeys();
+                    showToast('Key 已删除');
+                } catch (error) {
+                    showToast('删除失败: ' + error.message, 'error');
+                }
+            }
+
+            async function patchApiKey(id, patch, successMessage) {
+                try {
+                    const response = await fetch(API_BASE + '/api-keys/update', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id, ...patch})
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '保存失败');
+                    await loadApiKeys();
+                    if (successMessage) showToast(successMessage);
+                    return true;
+                } catch (error) {
+                    showToast('保存失败: ' + error.message, 'error');
+                    return false;
+                }
+            }
+
+            /**
+             * 账号权限弹窗
+             *
+             * 两个模式：全部账号（写 null）/ 指定账号（写文件名数组）。
+             * 「指定」但一个都没勾时不允许保存 —— 那会让这个 Key 完全不可用，
+             * 用户多半是误操作而不是本意。
+             */
+            async function openKeyScopeEditor(id) {
+                const key = findApiKey(id);
+                if (!key) return;
+                let credentials = [];
+                try {
+                    const response = await fetch(API_BASE + '/credentials');
+                    const data = await response.json();
+                    credentials = Array.isArray(data.credentials) ? data.credentials : [];
+                } catch (error) {
+                    showToast('加载账号列表失败: ' + error.message, 'error');
+                    return;
+                }
+
+                editingKeyId = id;
+                const selected = new Set(Array.isArray(key.allowedCredentialFiles) ? key.allowedCredentialFiles : []);
+                const unrestricted = key.allowedCredentialFiles === null;
+
+                // 按上游 host 分组，用户能一眼看出「国内站 / 国际站 / 企业站」
+                const groups = new Map();
+                for (const cred of credentials) {
+                    let host = '未知上游';
+                    try {
+                        host = new URL(cred.baseUrl).host;
+                    } catch {
+                        /* keep fallback */
+                    }
+                    if (!groups.has(host)) groups.set(host, []);
+                    groups.get(host).push(cred);
+                }
+
+                const rows = Array.from(groups.entries())
+                    .map(([host, list]) => {
+                        const items = list
+                            .map((cred) => {
+                                const checked =
+                                    !unrestricted && selected.has(cred.filename) ? 'checked' : '';
+                                const disabled = unrestricted ? 'disabled' : '';
+                                const tag = cred.isRoutable
+                                    ? ''
+                                    : '<span style="color:#b45309;font-size:0.72rem;margin-left:6px;">（' +
+                                      escapeHtml(cred.unroutableReason || '不可用') +
+                                      '）</span>';
+                                return `<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.86rem;">
+                                    <input type="checkbox" class="scope-check" value="${escapeHtml(cred.filename)}" ${checked} ${disabled}>
+                                    <span>${escapeHtml(cred.email || cred.userId)}${tag}</span>
+                                </label>`;
+                            })
+                            .join('');
+                        return `<div style="margin-bottom:12px;">
+                            <div style="font-size:0.78rem;color:#6b7280;margin-bottom:4px;">${escapeHtml(host)} · ${list.length} 个账号</div>
+                            ${items}
+                        </div>`;
+                    })
+                    .join('');
+
+                const modal = document.getElementById('keyScopeModal');
+                document.getElementById('keyScopeTitle').textContent = '「' + key.label + '」可使用的 CodeBuddy 账号';
+                document.getElementById('keyScopeBody').innerHTML =
+                    `<label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:600;">
+                        <input type="radio" name="scopeMode" value="all" ${unrestricted ? 'checked' : ''} onchange="onScopeModeChange()">
+                        全部账号（以后新增的账号也自动可用）
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:600;">
+                        <input type="radio" name="scopeMode" value="pick" ${unrestricted ? '' : 'checked'} onchange="onScopeModeChange()">
+                        只允许勾选的账号
+                    </label>
+                    <div id="keyScopePicker" style="border-top:1px solid #e5e7eb;padding-top:12px;${unrestricted ? 'opacity:0.45;' : ''}">
+                        ${rows || '<div style="color:#6b7280;font-size:0.85rem;">还没有任何账号</div>'}
+                    </div>`;
+                modal.style.display = 'flex';
+            }
+
+            function onScopeModeChange() {
+                const mode = document.querySelector('input[name="scopeMode"]:checked')?.value;
+                const picker = document.getElementById('keyScopePicker');
+                if (!picker) return;
+                const isPick = mode === 'pick';
+                picker.style.opacity = isPick ? '1' : '0.45';
+                picker.querySelectorAll('input.scope-check').forEach((el) => {
+                    el.disabled = !isPick;
+                });
+            }
+
+            async function saveKeyScope() {
+                const mode = document.querySelector('input[name="scopeMode"]:checked')?.value || 'all';
+                let scope = null;
+                if (mode === 'pick') {
+                    scope = Array.from(document.querySelectorAll('input.scope-check:checked')).map((el) => el.value);
+                    if (scope.length === 0) {
+                        showToast('至少勾选一个账号，否则这个 Key 会用不了', 'error');
+                        return;
+                    }
+                }
+                const ok = await patchApiKey(editingKeyId, {allowedCredentialFiles: scope}, '账号权限已保存');
+                if (ok) closeKeyScopeModal();
+            }
+
+            function closeKeyScopeModal() {
+                const modal = document.getElementById('keyScopeModal');
+                if (modal) modal.style.display = 'none';
+                editingKeyId = null;
+            }
+
+            /* ==================== 模型可用性测试 ==================== */
+
+            /**
+             * 打开测试弹窗：先让用户勾选要测哪几个模型
+             *
+             * 为什么不默认全测：每次探测都是一次真实的上游调用，按输入 token 计费。
+             * 32 个模型全测一轮会消耗积分，用户往往只想确认手头在用的那几个。
+             * 所以这里只拉模型清单（只读、不计费），勾选后才真正发请求。
+             */
+            function openModelTest(index) {
+                if (modelTestAbort) {
+                    try { modelTestAbort.abort(); } catch {}
+                    modelTestAbort = null;
+                }
+
+                modelTestIndex = index;
+                modelTestModels = [];
+
+                const modal = document.getElementById('modelTestModal');
+                const bodyEl = document.getElementById('modelTestBody');
+                const summaryEl = document.getElementById('modelTestSummary');
+                const barEl = document.getElementById('modelTestProgressBar');
+                const startBtn = document.getElementById('modelTestStartBtn');
+                const costHint = document.getElementById('modelTestCostHint');
+
+                document.getElementById('modelTestTitle').textContent = '测试模型可用性';
+                document.getElementById('modelTestSubtitle').textContent =
+                    '账号 #' + index + ' · 勾选后才会发请求（每次探测都会消耗少量积分）';
+                bodyEl.innerHTML = '<div class="empty-state"><p>正在获取模型列表... <span class="loading"></span></p></div>';
+                summaryEl.textContent = '';
+                costHint.textContent = '';
+                barEl.style.width = '0';
+                startBtn.style.display = 'none';
+                startBtn.disabled = true;
+                modal.style.display = 'flex';
+
+                fetch(API_BASE + '/credentials/models?index=' + encodeURIComponent(index))
+                    .then((r) => r.json().then((d) => ({ok: r.ok, data: d})))
+                    .then(({ok, data}) => {
+                        if (!ok) throw new Error(data.error || '获取模型列表失败');
+                        modelTestModels = Array.isArray(data.models) ? data.models : [];
+                        const usable = data.usableCount != null
+                            ? data.usableCount
+                            : modelTestModels.filter((m) => !m.blocked).length;
+                        const blockedN = data.blockedCount || 0;
+                        document.getElementById('modelTestSubtitle').textContent =
+                            (data.email || '账号 #' + index) + ' · ' + data.baseUrl +
+                            ' · ' + usable + ' 个可用' +
+                            (blockedN ? ' · ' + blockedN + ' 个已知不可用（灰显）' : '');
+                        renderModelPicker(data);
+                        startBtn.style.display = 'inline-flex';
+                    })
+                    .catch((error) => {
+                        bodyEl.innerHTML = '<div class="empty-state"><p style="color:#dc2626;">' +
+                            escapeHtml(error.message) + '</p></div>';
+                    });
+            }
+
+            /**
+             * 渲染模型勾选列表
+             *
+             * 默认不勾任何模型：用户勾了哪个就测哪个，成本完全由他控制。
+             * 但会记住上一次的勾选，重复测同一批时不用重新点。
+             */
+            function renderModelPicker(data) {
+                const bodyEl = document.getElementById('modelTestBody');
+                const vendorLabels = data.vendorLabels || {};
+                const vendorOrder = Array.isArray(data.vendorOrder) && data.vendorOrder.length
+                    ? data.vendorOrder
+                    : ['deepseek', 'gpt', 'gemini', 'hunyuan', 'zhipu', 'moonshot', 'minimax', 'others'];
+                const remembered = loadRememberedProbeModels(modelTestIndex);
+
+                const groups = {};
+                for (const m of modelTestModels) {
+                    if (!groups[m.vendor]) groups[m.vendor] = [];
+                    groups[m.vendor].push(m);
+                }
+
+                let html = '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;font-size:0.84rem;">' +
+                    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+                    '<input type="checkbox" id="modelPickAll" onchange="toggleAllProbeModels(this.checked)"> 全选' +
+                    '</label>' +
+                    '<span id="modelPickCount" style="color:#6b7280;">已选 0 个</span>' +
+                    '</div>';
+
+                for (const vendor of vendorOrder) {
+                    const list = groups[vendor];
+                    if (!list || list.length === 0) continue;
+                    const blockedInGroup = list.filter((m) => m.blocked).length;
+                    // 厂商分组头自带勾选框：勾上等于一次性勾选本组全部模型。
+                    // data-vendor 让 updateProbeSelection 能回头把分组框同步成
+                    // 全选 / 半选 / 未选，避免手点单个模型后分组框状态说谎。
+                    html += '<div style="margin-bottom:12px;">' +
+                        '<label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:#6b7280;margin-bottom:4px;cursor:pointer;">' +
+                        '<input type="checkbox" class="vendor-pick" data-vendor="' + escapeHtml(vendor) + '"' +
+                        ' onchange="toggleVendorModels(this)">' +
+                        escapeHtml(vendorLabels[vendor] || vendor) + ' · ' + list.length + ' 个' +
+                        (blockedInGroup ? '<span style="color:#dc2626;">（' + blockedInGroup + ' 个不可用）</span>' : '') +
+                        '</label>';
+                    for (const m of list) {
+                        // 已知不可用的模型默认不勾：本意是测「能不能用」，
+                        // 已经知道答案的没必要再花一次请求。但框保留可见，
+                        // 用户想复测（比如刚升级套餐）仍然可以自己点上。
+                        const checked = !m.blocked && remembered.has(m.id) ? ' checked' : '';
+                        const rowStyle = m.blocked
+                            ? 'display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.85rem;cursor:pointer;opacity:0.55;'
+                            : 'display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.85rem;cursor:pointer;';
+                        const blockedTag = m.blocked
+                            ? '<span style="color:#dc2626;font-size:0.75rem;margin-left:4px;" title="' +
+                              escapeHtml(m.blockedReason || '当前账号不可用') + '">不可用</span>'
+                            : '';
+                        html += '<label style="' + rowStyle + '">' +
+                            '<input type="checkbox" class="model-pick" data-vendor="' + escapeHtml(vendor) + '"' +
+                            ' data-blocked="' + (m.blocked ? '1' : '0') + '"' +
+                            ' value="' + escapeHtml(m.id) + '"' + checked +
+                            ' onchange="updateProbeSelection()">' +
+                            '<code>' + escapeHtml(m.id) + '</code>' +
+                            (m.name && m.name !== m.id
+                                ? '<span style="color:#9ca3af;">' + escapeHtml(m.name) + '</span>'
+                                : '') +
+                            blockedTag +
+                            '</label>';
+                    }
+                    html += '</div>';
+                }
+
+                bodyEl.innerHTML = html;
+                updateProbeSelection();
+            }
+
+            function getSelectedProbeModels() {
+                return Array.prototype.slice
+                    .call(document.querySelectorAll('input.model-pick:checked'))
+                    .map((el) => el.value);
+            }
+
+            /**
+             * 厂商分组框：勾上就全选本组，取消就全不选
+             */
+            function toggleVendorModels(el) {
+                var vendor = el.getAttribute('data-vendor');
+                var boxes = document.querySelectorAll('input.model-pick[data-vendor="' + vendor + '"]');
+                for (var i = 0; i < boxes.length; i++) {
+                    // 灰色（已知不可用）的模型也一起勾上：
+                    // 用户点分组框就是想「这一组全测一遍」，包括复测那些标灰的
+                    // （升级套餐后、或者上一次是临时额度问题，都可能已经恢复）。
+                    boxes[i].checked = el.checked;
+                }
+                updateProbeSelection();
+            }
+
+            function updateProbeSelection() {
+                const selected = getSelectedProbeModels();
+                const countEl = document.getElementById('modelPickCount');
+                const startBtn = document.getElementById('modelTestStartBtn');
+                const costHint = document.getElementById('modelTestCostHint');
+                const allEl = document.getElementById('modelPickAll');
+
+                if (countEl) countEl.textContent = '已选 ' + selected.length + ' 个';
+                if (startBtn) {
+                    startBtn.disabled = selected.length === 0;
+                    startBtn.textContent = selected.length ? '开始测试（' + selected.length + ' 个）' : '开始测试';
+                }
+                if (costHint) {
+                    // 不写具体数字：上游按输入 token 计费，探针只有几十个 token，
+                    // 多数情况实际扣 0，偶尔几分钱。给个假精确值反而误导。
+                    costHint.textContent = selected.length
+                        ? '将发送 ' + selected.length + ' 次最小请求，会少量消耗积分'
+                        : '未勾选任何模型时不发请求';
+                }
+                if (allEl) {
+                    const total = document.querySelectorAll('input.model-pick').length;
+                    allEl.checked = selected.length > 0 && selected.length === total;
+                    allEl.indeterminate = selected.length > 0 && selected.length < total;
+                }
+
+                // 分组框跟着组内全部模型（含灰色）的勾选情况走：全选/半选/空。
+                // 灰色模型也参与计算，否则点了分组框把灰的也勾上之后，
+                // 分组框自己反倒显示成半选，看着像没生效。
+                var vendorBoxes = document.querySelectorAll('input.vendor-pick');
+                for (var i = 0; i < vendorBoxes.length; i++) {
+                    var v = vendorBoxes[i].getAttribute('data-vendor');
+                    var items = document.querySelectorAll('input.model-pick[data-vendor="' + v + '"]');
+                    var total = items.length;
+                    var checkedCount = 0;
+                    for (var j = 0; j < total; j++) {
+                        if (items[j].checked) checkedCount++;
+                    }
+                    vendorBoxes[i].checked = total > 0 && checkedCount === total;
+                    vendorBoxes[i].indeterminate = checkedCount > 0 && checkedCount < total;
+                }
+            }
+
+            /**
+             * 全选 / 全不选
+             *
+             * 包含灰色的模型：全选就是字面意义上的全选，
+             * 想跳过灰色的可以自己取消勾选。
+             */
+            function toggleAllProbeModels(checked) {
+                var boxes = document.querySelectorAll('input.model-pick');
+                for (var i = 0; i < boxes.length; i++) {
+                    boxes[i].checked = checked;
+                }
+                updateProbeSelection();
+            }
+
+            function probeMemoryKey(index) {
+                return 'codebuddy-probe-models-' + index;
+            }
+
+            function loadRememberedProbeModels(index) {
+                try {
+                    const raw = localStorage.getItem(probeMemoryKey(index));
+                    const arr = raw ? JSON.parse(raw) : [];
+                    return new Set(Array.isArray(arr) ? arr : []);
+                } catch {
+                    return new Set();
+                }
+            }
+
+            function saveRememberedProbeModels(index, models) {
+                try {
+                    localStorage.setItem(probeMemoryKey(index), JSON.stringify(models.slice(0, 50)));
+                } catch {
+                    /* localStorage 不可用时忽略 */
+                }
+            }
+
+            /**
+             * 开始测试：把勾选的模型发给后端，结果通过 SSE 逐条推回来
+             */
+            function startModelTest() {
+                const models = getSelectedProbeModels();
+                if (models.length === 0) {
+                    showToast('请先勾选要测试的模型', 'error');
+                    return;
+                }
+                saveRememberedProbeModels(modelTestIndex, models);
+
+                const bodyEl = document.getElementById('modelTestBody');
+                const summaryEl = document.getElementById('modelTestSummary');
+                const barEl = document.getElementById('modelTestProgressBar');
+                const startBtn = document.getElementById('modelTestStartBtn');
+                const costHint = document.getElementById('modelTestCostHint');
+
+                bodyEl.innerHTML = '<div class="empty-state"><p>正在测试... <span class="loading"></span></p></div>';
+                summaryEl.textContent = '';
+                barEl.style.width = '0';
+                startBtn.style.display = 'none';
+                costHint.textContent = '';
+
+                const rows = new Map();
+                let total = models.length;
+                let done = 0;
+
+                const render = () => {
+                    const list = Array.from(rows.values());
+                    if (list.length === 0) return;
+                    list.sort((a, b) => {
+                        const rank = (r) => (r.status === 'ok' ? 0 : r.status === 'model_unavailable' ? 2 : 1);
+                        return rank(a) - rank(b) || a.model.localeCompare(b.model);
+                    });
+                    let html = '<table class="guide-model-table"><thead><tr><th>模型</th><th>结果</th><th>说明</th><th>耗时</th></tr></thead><tbody>';
+                    for (const r of list) {
+                        const color = r.status === 'ok' ? '#059669' : r.blameModel ? '#dc2626' : '#b45309';
+                        html += '<tr>' +
+                            '<td><code>' + escapeHtml(r.model) + '</code></td>' +
+                            '<td style="color:' + color + ';font-weight:600;">' + escapeHtml(r.label) + '</td>' +
+                            '<td style="color:#6b7280;">' + escapeHtml(r.detail || '') + '</td>' +
+                            '<td>' + (r.elapsedMs ? (r.elapsedMs / 1000).toFixed(1) + 's' : '—') + '</td>' +
+                            '</tr>';
+                    }
+                    html += '</tbody></table>';
+                    bodyEl.innerHTML = html;
+                };
+
+                const controller = new AbortController();
+                modelTestAbort = controller;
+
+                fetch(API_BASE + '/credentials/test-models', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({index: modelTestIndex, models: models}),
+                    signal: controller.signal
+                })
+                    .then((response) => {
+                        if (!response.ok) {
+                            return response.json().then((d) => {
+                                throw new Error(d.error || '测试失败（HTTP ' + response.status + '）');
+                            });
+                        }
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buffer = '';
+
+                        const pump = () => reader.read().then(({done: finished, value}) => {
+                            if (finished) return;
+                            buffer += decoder.decode(value, {stream: true});
+
+                            let sep;
+                            while ((sep = buffer.indexOf('\n\n')) !== -1) {
+                                const rawEvent = buffer.slice(0, sep);
+                                buffer = buffer.slice(sep + 2);
+                                const evLines = rawEvent.split('\n');
+                                let eventName = 'message';
+                                let dataLine = '';
+                                for (const line of evLines) {
+                                    if (line.indexOf('event: ') === 0) eventName = line.slice(7).trim();
+                                    else if (line.indexOf('data: ') === 0) dataLine += line.slice(6);
+                                }
+                                if (!dataLine) continue;
+                                let payload;
+                                try { payload = JSON.parse(dataLine); } catch (e) { continue; }
+
+                                if (eventName === 'start') {
+                                    total = payload.total || models.length;
+                                } else if (eventName === 'result') {
+                                    rows.set(payload.model, payload);
+                                    done = payload.done || rows.size;
+                                    barEl.style.width = total ? Math.round((done / total) * 100) + '%' : '0';
+                                    render();
+                                } else if (eventName === 'done') {
+                                    barEl.style.width = '100%';
+                                    const s = payload.summary || {};
+                                    let text =
+                                        '<strong>' + (s.ok || 0) + '</strong> 个可用 · ' +
+                                        '<span style="color:#dc2626;">' + (s.failed || 0) + '</span> 个模型不可用 · ' +
+                                        '<span style="color:#b45309;">' + (s.unknown || 0) + '</span> 个测不出（渠道/网络，不代表模型坏）';
+                                    if (s.notTested) {
+                                        text += ' · <span style="color:#6b7280;">' + s.notTested + ' 个未测试</span>';
+                                    }
+                                    if (s.totalCredit) {
+                                        text += ' · 实际消耗 ' + s.totalCredit.toFixed(3) + ' credits';
+                                    }
+                                    if (payload.aborted && payload.abortReason) {
+                                        text += '<div style="margin-top:6px;color:#b45309;font-size:0.8rem;">' +
+                                            escapeHtml(payload.abortReason) + '</div>';
+                                    }
+                                    text += '<div style="margin-top:6px;font-size:0.78rem;color:#9ca3af;">' +
+                                        '测试时间 ' + new Date().toLocaleTimeString('zh-CN') +
+                                        ' · 6004/11102 这类「用量超限」通常是临时的，过几分钟可以重测</div>';
+                                    summaryEl.innerHTML = text;
+                                    startBtn.style.display = 'inline-flex';
+                                    startBtn.textContent = '重新测试';
+                                } else if (eventName === 'error') {
+                                    summaryEl.innerHTML = '<span style="color:#dc2626;">探测中断：' +
+                                        escapeHtml(payload.message || '') + '</span>';
+                                    startBtn.style.display = 'inline-flex';
+                                }
+                            }
+                            return pump();
+                        }).catch((err) => {
+                            if (err.name === 'AbortError') return;
+                            summaryEl.innerHTML = '<span style="color:#dc2626;">连接中断：' +
+                                escapeHtml(err.message) + '</span>';
+                            startBtn.style.display = 'inline-flex';
+                        });
+
+                        return pump();
+                    })
+                    .catch((error) => {
+                        if (error.name === 'AbortError') return;
+                        bodyEl.innerHTML = '<div class="empty-state"><p style="color:#dc2626;">' +
+                            escapeHtml(error.message) + '</p></div>';
+                        startBtn.style.display = 'inline-flex';
+                    });
+            }
+
+            function closeModelTest() {
+                if (modelTestAbort) {
+                    try { modelTestAbort.abort(); } catch {}
+                    modelTestAbort = null;
+                }
+                const modal = document.getElementById('modelTestModal');
+                if (modal) modal.style.display = 'none';
+                modelTestIndex = null;
             }
 
             function updateGuideConfig() {
@@ -2421,24 +3052,20 @@
                 }
             }
 
-            async function resetApiKey() {
-                if (!confirm('重置将同时影响所有端点（Copilot/CodeBuddy/Relay），旧 Key 将立即失效，确定？')) return;
+            async function resetApiKey(id) {
+                const key = findApiKey(id);
+                if (!confirm('重置「' + (key ? key.label : id) + '」的 Key？它的旧明文会立即失效，其它 Key 不受影响。')) return;
                 try {
-                    const response = await fetch(`/codebuddyFE/regenerate-key`, {
-                        method: 'POST'
+                    const response = await fetch(API_BASE + '/api-keys/regenerate', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id})
                     });
                     const data = await response.json();
-                    if (data.api_key) {
-                        apiKeyPlain = data.api_key;
-                        const body = apiKeyPlain.slice('sk-'.length);
-                        apiKeyMasked = 'sk-' + body.slice(0, 8) + '****' + body.slice(-4);
-                        apiKeyVisible = true;
-                        document.getElementById('apiKeyText').textContent = apiKeyPlain;
-                        document.getElementById('toggleKeyBtn').textContent = '🙈';
-                        showToast('API Key 已重置，请妥善保存');
-                    } else {
-                        throw new Error(data.error || '重置失败');
-                    }
+                    if (!response.ok) throw new Error(data.error || '重置失败');
+                    apiKeyRevealed.add(id);
+                    await loadApiKeys();
+                    showToast('Key 已重置，新明文已展开');
                 } catch (error) {
                     showToast('重置失败: ' + error.message, 'error');
                 }
