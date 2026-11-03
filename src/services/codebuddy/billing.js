@@ -44,6 +44,22 @@ function parseNumber(value) {
 }
 
 /**
+ * 解析上游的周期结束时间
+ *
+ * CycleEndTime 是 "YYYY-MM-DD HH:mm:ss" 的北京时间字符串，与 DeductionEndTime
+ * 的毫秒时间戳不是同一种编码，必须显式按 +08:00 解析——否则在非中国时区的
+ * 机器上会偏几个小时，月初/月末的边界判断就会错。
+ *
+ * @param {*} value
+ * @returns {number} 毫秒时间戳；无法解析时返回 0
+ */
+function parseCycleEnd(value) {
+    if (!value || typeof value !== 'string') return 0;
+    const ms = Date.parse(value.trim().replace(' ', 'T') + '+08:00');
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
  * 从积分包列表汇总月度额度账本
  *
  * 口径按**包的自然月**切分，不是按"当前持有量"：
@@ -58,7 +74,7 @@ function parseNumber(value) {
  *
  * @param {Array} packages - get-user-resource 返回的 Accounts 数组
  * @param {Date} [now] - 用于确定"本月"，测试可注入
- * @returns {{month, monthLabel, remaining, capacity, used, packages, soonestExpiry, allTime}}
+ * @returns {{month, monthLabel, remaining, capacity, used, packages, available, availablePackages, soonestExpiry, allTime}}
  */
 export function summarizePackages(packages, now = new Date()) {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -71,6 +87,12 @@ export function summarizePackages(packages, now = new Date()) {
     let monthCount = 0;
     let soonestExpiry = null;
     let soonestTs = Infinity;
+
+    // 可用余额：账上现在真能花的部分（未过期且还有余额，不按领取月份过滤）。
+    // 与本月口径的区别在月初最明显：上月领的包没花完，本月主卡若只算本月新领的
+    // 会显示成 0，而实际上那笔钱还在账上、还能花。
+    let available = 0;
+    let availableCount = 0;
 
     // 全部口径（含往月）单独累计，供需要时对照
     let allCapacity = 0;
@@ -110,14 +132,29 @@ export function summarizePackages(packages, now = new Date()) {
         // 它们同样是"会过期的钱"，所以这里不按月份过滤。
         if (r > 0) {
             liveCount++;
-            const expiry = Number(p.DeductionEndTime) || 0;
+            // 订阅型包（国际站 Free Plan、国内体验版）的 DeductionEndTime 是订阅到期日
+            // （数年之后），额度实际按 Cycle 每月重置，所以"这笔额度什么时候清零"要看
+            // CycleEndTime。独立包（签到包、Bonus Pack）两个字段只差几秒，不能当成
+            // 订阅型——否则国内站签到包会被误标成"本月额度清零"。
+            // 阈值取 1 天：独立包的差值在秒级，订阅型在年级，中间没有模糊地带。
+            const cycleEnd = parseCycleEnd(p.CycleEndTime);
+            const dedEnd = Number(p.DeductionEndTime) || 0;
+            const cycleBased = Boolean(cycleEnd) && (!dedEnd || Math.abs(dedEnd - cycleEnd) > 86400000);
+            const expiry = cycleBased ? cycleEnd : (dedEnd || cycleEnd || 0);
+            // 没有作废时间（长期有效）或还没到期，才算现在能花
+            if (!expiry || expiry > now.getTime()) {
+                available += r;
+                availableCount++;
+            }
             if (expiry > now.getTime() && expiry < soonestTs) {
                 soonestTs = expiry;
                 soonestExpiry = {
                     at: expiry,
                     daysLeft: (expiry - now.getTime()) / 86400000,
                     name: p.PackageName || '积分包',
-                    remain: r
+                    remain: r,
+                    // 到期时间来自周期而非包级：面板据此区分"本月额度清零"和"积分包作废"
+                    cycleBased
                 };
             }
         }
@@ -133,6 +170,9 @@ export function summarizePackages(packages, now = new Date()) {
         packages: monthCount,
         // 余额分布（含往月仍有余的包）
         livePackages: liveCount,
+        // 当前可用余额（未过期、还有余额；主卡展示这个）
+        available,
+        availablePackages: availableCount,
         soonestExpiry,
         allTime: {
             capacity: allCapacity,
@@ -615,6 +655,8 @@ export async function queryAllBillingStatus() {
             capacity: rec.capacity ?? null,
             used: rec.used ?? null,
             packages: rec.packages ?? null,
+            available: rec.available ?? null,
+            availablePackages: rec.availablePackages ?? null,
             soonestExpiry: rec.soonestExpiry ?? null,
             month: rec.month ?? null,
             monthLabel: rec.monthLabel ?? null,
@@ -633,6 +675,8 @@ export async function queryAllBillingStatus() {
             entry.capacity = summary.capacity;
             entry.used = summary.used;
             entry.packages = summary.packages;
+            entry.available = summary.available;
+            entry.availablePackages = summary.availablePackages;
             entry.soonestExpiry = summary.soonestExpiry;
             entry.month = summary.month;
             entry.monthLabel = summary.monthLabel;

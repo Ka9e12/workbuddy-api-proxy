@@ -91,6 +91,40 @@ test('国际站包用完时从"最近作废"里消失，但仍计入已花', () 
     assert.equal(summary.soonestExpiry.name, 'Free Plan');
 });
 
+test('国际站 Free Plan 真实字段原样：周期结束 2026-11-30，而不是 2035 年的订阅到期日', () => {
+    // 2026-11-03 实测数据原样（截取账本相关字段）。
+    // DeductionEndTime 是 2035-01-19（订阅到期），CycleEndTime 是本月底。
+    // "这笔额度什么时候清零"必须看 CycleEndTime。
+    const summary = summarizePackages(
+        [
+            {
+                CreateTime: 1792414855000,
+                CycleStartTime: '2026-11-01 00:00:00',
+                CycleEndTime: '2026-11-30 23:59:59',
+                DeductionEndTime: 2052824453000,
+                CapacitySize: 100,
+                CapacityRemain: 100,
+                CapacityUsed: 0,
+                CycleCapacitySize: 100,
+                CycleCapacityRemain: 95,
+                CycleCapacityUsed: 4,
+                CycleCapacitySizePrecise: '100',
+                CycleCapacityRemainPrecise: '95.71000018',
+                CycleCapacityUsedPrecise: '4.28999982',
+                PackageName: 'Free Plan Subscription'
+            }
+        ],
+        new Date(2026, 10, 3, 10, 0, 0)
+    );
+    assert.equal(summary.soonestExpiry.cycleBased, true);
+    assert.equal(summary.soonestExpiry.name, 'Free Plan Subscription');
+    // 2026-11-03 10:00 → 2026-11-30 23:59:59（北京时间）约 27.5 天
+    assert.ok(summary.soonestExpiry.daysLeft > 27 && summary.soonestExpiry.daysLeft < 28,
+        '应为约 27.6 天，实际 ' + summary.soonestExpiry.daysLeft);
+    // 余额取的是本周期剩余
+    assert.ok(Math.abs(summary.available - 95.71) < 1e-6);
+});
+
 test('国际站某些包没有 Precise 字段时也能读', () => {
     // 实测国际站 Bonus Pack 只有 CycleCapacitySize，没有 Precise 变体
     const summary = summarizePackages(
