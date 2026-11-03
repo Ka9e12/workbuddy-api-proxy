@@ -163,7 +163,10 @@ export async function queryBuddyInfo(credential) {
 
 /**
  * 查询猫猫旅行状态
- * @returns {Promise<{state, dailyLimitReached, recordId, rewardCredit, arriveAt}>}
+ *
+ * letter 是上游到站后携带的礼物详情（未到站时为 null）；location 是目的地。
+ * 这两个字段之前没取，导致领奖后只能显示"已领取"，说不出带回了什么。
+ * @returns {Promise<{state, dailyLimitReached, recordId, rewardCredit, arriveAt, locationName, letter, durationHours}>}
  */
 export async function queryTravelStatus(credential) {
     const data = await callGrowth(credential, 'buddy/travel/status', {retryOnNetwork: true});
@@ -172,7 +175,10 @@ export async function queryTravelStatus(credential) {
         dailyLimitReached: data?.daily_limit_reached === true,
         recordId: data?.record_id || 0,
         rewardCredit: data?.reward_credit || 0,
-        arriveAt: data?.arrive_at || 0
+        arriveAt: data?.arrive_at || 0,
+        locationName: data?.location?.name || null,
+        letter: data?.letter || null,
+        durationHours: data?.duration_hours || 0
     };
 }
 
@@ -307,20 +313,34 @@ export async function departBuddy(credential) {
 
 /**
  * 领取到站奖励（仅 state=arrived 时才提交）
- * @returns {Promise<{action:string, message:string, credit:number}>}
+ *
+ * 返回值同时带上礼物详情，供面板弹窗展示"带回了什么"。
+ * 字段优先级：领奖接口响应 > 领奖前查到的 status。
+ * 上游响应结构不保证稳定，所以每个字段都独立回退，拿不到就用 status 的快照，
+ * 最坏情况也至少能显示积分和目的地。
+ *
+ * @returns {Promise<{action:string, message:string, credit:number, locationName:string|null, letter:Object|null}>}
  */
 export async function claimTravelReward(credential) {
     const status = await queryTravelStatus(credential);
     const decision = decideClaim(status);
     if (decision.action !== 'claim') {
-        return {...decision, credit: 0};
+        return {...decision, credit: 0, locationName: null, letter: null};
     }
 
-    await callGrowth(credential, 'buddy/travel/claim', {
+    const data = await callGrowth(credential, 'buddy/travel/claim', {
         method: 'POST',
         body: {record_id: status.recordId}
     });
-    return {action: 'claimed', message: '已领取到站奖励', credit: status.rewardCredit};
+    // 领奖响应可能把结果放在 data 下，也可能直接平铺；两种都试一次
+    const r = data?.reward || data || {};
+    return {
+        action: 'claimed',
+        message: '已领取到站奖励',
+        credit: Number(r.reward_credit ?? r.credit ?? status.rewardCredit) || 0,
+        locationName: r.location?.name || r.location_name || status.locationName || null,
+        letter: r.letter || status.letter || null
+    };
 }
 
 /**
@@ -377,9 +397,16 @@ export async function runStreakBonus(credential) {
 /* ==================== 组合任务 ==================== */
 
 /**
- * 执行一次成长中心日常（供启动/手动触发）：
- * 领到站奖励 → 派出 → 连登管家
+ * 执行一次猫猫旅行日常（供面板「执行一次」/ 启动 / 定时触发）
+ *
+ * 只做猫猫旅行三件事：领养 → 领到站奖励 → 派出。
+ * 连登兑换和抽奖**不在这里跑**：抽奖次数长期为 0、连登档位兑换不出东西，
+ * 每次点按钮都多打几次上游请求，纯属空转。runStreakBonus 函数仍保留，
+ * 需要时可由其他入口显式调用。
+ *
  * 幂等：每个动作先查状态再决定；写操作不重试。
+ * 领奖后再派出，能否成功完全交给上游的 daily_limit_reached 判断，
+ * 不在本地加"今天领过就不许派"的限制。
  * @param {Object} credential
  * @returns {Promise<Object>} 各步结果
  */
@@ -395,6 +422,7 @@ export async function runGrowthDaily(credential) {
         if (!info.hasBuddy) {
             result.adopt = await adoptBuddy(credential);
         }
+        result.buddyName = info.name || null;
     } catch (err) {
         result.adopt = {action: 'error', message: err.message};
     }
@@ -414,20 +442,14 @@ export async function runGrowthDaily(credential) {
         logger.warn(`[CodeBuddy growth] 派猫失败（不影响聊天）：${err.message}`);
     }
 
-    try {
-        result.streak = await runStreakBonus(credential);
-    } catch (err) {
-        result.streak = {message: err.message};
-    }
-
     return result;
 }
 
 /**
  * 查询某账号的成长中心概览（供管理面板展示，全部只读）
  *
- * 只查面板真正显示的两项：猫猫旅行状态。其余（连登、抽奖次数、成长任务、
- * 猫猫档案）前端都不消费，多查一次就是白打一次上游请求，所以不查。
+ * 只查面板真正显示的两项：猫猫旅行状态、猫名（弹窗里要写"暴富喵 带回了礼物"）。
+ * 其余（连登、抽奖次数、成长任务）前端都不消费，多查一次就是白打一次上游请求。
  *
  * @returns {Promise<Object>}
  */
@@ -439,11 +461,17 @@ export async function queryGrowthOverview(credential) {
             reason: '企业站/国际站无个人成长体系'
         };
     }
-    const out = {supported: true, userId: credential.user_id || 'unknown'};
-    try {
-        out.travel = await queryTravelStatus(credential);
-    } catch (err) {
-        out.travelError = err.message;
+    const out = {supported: true, userId: credential.user_id || 'unknown', buddyName: null};
+    // 两个查询互不依赖，并行发；任一失败不影响另一个
+    const [info, travel] = await Promise.all([
+        queryBuddyInfo(credential).catch(() => null),
+        queryTravelStatus(credential).then((v) => ({value: v})).catch((err) => ({error: err}))
+    ]);
+    out.buddyName = info?.name || null;
+    if (travel.error) {
+        out.travelError = travel.error.message;
+    } else {
+        out.travel = travel.value;
     }
     return out;
 }

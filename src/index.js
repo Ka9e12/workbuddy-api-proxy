@@ -265,7 +265,10 @@ async function printBalance() {
             console.log(`  已花费:   ${summary.used.toFixed(2)} credits`);
             if (summary.soonestExpiry) {
                 const d = summary.soonestExpiry.daysLeft;
-                console.log(`  最近作废: ${Math.floor(d)} 天后（那一包还剩 ${summary.soonestExpiry.remain.toFixed(2)}）`);
+                // 与面板同一套阈值：订阅型包按周期结束算，别把 8 年的订阅到期日打成 2999 天
+                const when = d >= 365 ? '长期有效' : `${Math.floor(d)} 天后`;
+                const kind = summary.soonestExpiry.cycleBased ? '（本月额度清零）' : '';
+                console.log(`  最近作废: ${when}${kind}（那一包还剩 ${summary.soonestExpiry.remain.toFixed(2)}）`);
             }
         } catch (error) {
             console.log(`\n【${label}】⚠ 查询失败: ${error.message}`);

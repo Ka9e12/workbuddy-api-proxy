@@ -289,6 +289,13 @@
                 margin-top: 3px;
                 line-height: 1.3;
             }
+            /* 提示语里的积分数字：这是用户真正关心的金额，不能跟解释文字一样灰 */
+            .metric-emph {
+                font-size: 0.8rem;
+                font-weight: 700;
+                color: #1f2937;
+                font-variant-numeric: tabular-nums;
+            }
             /* 站点分组标题：国内站/国际站的积分是两套账，各自成块，不跨站合计 */
             .realm-head {
                 display: flex;
@@ -658,6 +665,20 @@
         </div>
 
         <div id="toast" class="toast"></div>
+
+        <!-- 猫猫旅行礼物弹窗：领到礼物时说明"带回了什么" -->
+        <div id="travelGiftModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;z-index:1000;"
+             onclick="if(event.target===this)closeTravelGift()">
+            <div style="background:#fff;border-radius:14px;padding:26px 28px;max-width:420px;width:92%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+                <div id="travelGiftTitle" style="font-size:1.05rem;font-weight:700;color:#374151;margin-bottom:4px;"></div>
+                <div id="travelGiftWhere" style="font-size:0.8rem;color:#6b7280;margin-bottom:18px;"></div>
+                <div id="travelGiftCredit" style="font-size:2.4rem;font-weight:800;color:#10b981;line-height:1.1;font-variant-numeric:tabular-nums;"></div>
+                <div style="font-size:0.78rem;color:#9ca3af;margin-top:4px;">积分已到账</div>
+                <div id="travelGiftLetter" style="display:none;margin-top:16px;padding:12px 14px;background:#f9fafb;border-radius:8px;font-size:0.82rem;color:#4b5563;text-align:left;line-height:1.55;"></div>
+                <div id="travelGiftDepart" style="margin-top:16px;font-size:0.8rem;color:#6b7280;"></div>
+                <button class="btn btn-primary" style="margin-top:20px;width:100%;" onclick="closeTravelGift()">好的</button>
+            </div>
+        </div>
 
         <!-- 模型可用性测试弹窗：逐条显示每个模型的探测结果 -->
         <div id="modelTestModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;z-index:1000;">
@@ -1850,6 +1871,28 @@
             }
 
             /**
+             * 把 soonestExpiry 渲染成一句人话，主卡和说明句共用。
+             *
+             * 主卡和徽章必须用同一套阈值，否则同一个包会一处说「2999 天后」
+             * 一处说「长期有效」，看起来像坏了。
+             * 订阅型包的到期是「本月额度清零」，不是「积分包作废」——措辞要区分开，
+             * 否则用户会以为整个订阅快没了。
+             */
+            function expiryTextHtml(expiry) {
+                if (!expiry || expiry.daysLeft == null) return '—';
+                const d = Number(expiry.daysLeft);
+                if (d >= 365) return '长期有效';
+                // 与 expiryBadgeHtml 同样用 floor，两处必须一致，
+                // 否则同一个包主卡说 14 天、徽章说 13 天
+                const text = d <= 3
+                    ? Math.floor(d) + ' 天后（即将作废）'
+                    : Math.floor(d) + ' 天后';
+                return expiry.cycleBased
+                    ? text + '<span class="metric-hint">本月额度清零</span>'
+                    : text;
+            }
+
+            /**
              * 一张指标卡：数字 + 名称 + 一句人话解释
              *
              * 只写「总额度容量」这种词没人看得懂。三个数字是一笔账：
@@ -1891,9 +1934,13 @@
                     const group = known.filter((a) => (a.realm || 'cn') === realm.key);
                     if (group.length === 0) return '';
                     const sum = (key) => group.reduce((s, a) => s + Number(a[key] || 0), 0);
-                    const totalRemaining = sum('remaining');
+                    const totalAvailable = sum('available');
                     const totalCapacity = sum('capacity');
                     const totalUsed = sum('used');
+                    // 进度条画"账上全部额度"的消耗率：本月口径只覆盖本月新领的包，
+                    // 月初几乎总是 0%，画出来会误导成"一分没花"
+                    const allCapacity = group.reduce((s, a) => s + Number(a.allTime?.capacity || 0), 0);
+                    const allUsed = group.reduce((s, a) => s + Number(a.allTime?.used || 0), 0);
 
                     let soonest = null;
                     for (const a of group) {
@@ -1909,20 +1956,27 @@
                         '<span>' + realm.host + ' · ' + group.length + ' 个账号</span>' +
                         '</div>' +
                         '<div class="metric-grid">' +
-                        metricCard('本月剩余可用积分', fmt(totalRemaining), '#10b981', '这个站现在能花的部分') +
+                        metricCard('当前可用积分', fmt(totalAvailable), '#10b981', '这个站现在能花的部分') +
                         metricCard('本月已花费', fmt(totalUsed), '#6b7280', '本月领取的积分里用掉的') +
                         metricCard('本月累计领取总额度', fmt(totalCapacity), '#1f2937', '本月所有积分包的面额之和') +
                         metricCard(
                             '最近一次作废',
-                            soonest ? Math.floor(soonest.daysLeft) + ' 天后' : '—',
+                            expiryTextHtml(soonest),
                             '#f59e0b',
-                            soonest ? '届时未用完的会清零' : '没有即将到期的包'
+                            soonest
+                                // 只说到期日不够——用户真正关心的是"这一批里还有多少钱要打水漂"，
+                                // 所以把即将到期那一包的剩余额度直接写在卡上
+                                ? (soonest.cycleBased ? '届时本周期未用完的额度清零' : '届时未用完的会清零') +
+                                  '，那一包还剩 <span class="metric-emph">' + fmt(soonest.remain) + '</span> 分'
+                                : '没有即将到期的包'
                         ) +
                         '</div>' +
-                        quotaBarHtml(totalUsed, totalCapacity) +
+                        quotaBarHtml(allUsed, allCapacity) +
                         '<div style="font-size:0.75rem;color:#6b7280;margin-top:8px;">' +
                         (soonest
-                            ? '最早的一批 ' + expiryBadgeHtml(soonest) + ' 到期，那一包里还有 ' + fmt(soonest.remain) + ' 分'
+                            ? (soonest.cycleBased
+                                ? '本月这批额度 ' + expiryBadgeHtml(soonest) + ' 清零，还剩 <span class="metric-emph">' + fmt(soonest.remain) + '</span> 分'
+                                : '最早的一批 ' + expiryBadgeHtml(soonest) + ' 到期，那一包里还有 <span class="metric-emph">' + fmt(soonest.remain) + '</span> 分')
                             : '当前没有即将到期的包') +
                         '</div>' +
                         '</div>'
@@ -1946,9 +2000,12 @@
                         .slice()
                         .sort((a, b) => String(a.realm || 'cn').localeCompare(String(b.realm || 'cn')))
                         .map((a) => {
-                            const remaining = a.remaining === null || a.remaining === undefined
+                            const available = a.available === null || a.available === undefined
+                                ? null
+                                : Number(a.available).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+                            const remaining = available === null
                                 ? '<span style="color:#9ca3af;">待查询</span>'
-                                : '<strong>' + Number(a.remaining).toLocaleString('zh-CN', {maximumFractionDigits: 2}) + '</strong>';
+                                : '<strong>' + available + '</strong>';
                             const staleTag = a.stale ? ' <span style="color:#f59e0b;font-size:0.7rem;">(待刷新)</span>' : '';
                             // 签到只有国内个人站有；国际站显示站点标签代替签到按钮
                             const checkinTag = !a.supportsCheckin
@@ -1957,13 +2014,13 @@
                                   ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;">已签到</span>'
                                   : '<button class="btn btn-secondary btn-small" onclick="singleCheckin(\'' + (a.userId || '').replace(/'/g, "\\'") + '\')">签到</button>';
                             const errorLine = a.error ? '<p style="color:#ef4444;font-size:0.8rem;">' + a.error + '</p>' : '';
-                            // 三个数字统一用「本月」口径，和上方指标卡一致
+                            // 第一个数是「现在能用多少」，后两个数解释本月这笔账怎么来的
                             const numbers =
                                 a.capacity == null
-                                    ? '本月还剩 ' + remaining + ' 积分'
-                                    : '本月还剩 ' + remaining +
-                                      ' 积分  ·  已花 ' + Number(a.used || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
-                                      ' 积分  ·  本月累计领取 ' + Number(a.capacity).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
+                                    ? '可用 ' + remaining + ' 积分'
+                                    : '可用 ' + remaining +
+                                      ' 积分  ·  本月已花 ' + Number(a.used || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
+                                      ' 积分  ·  本月领取 ' + Number(a.capacity).toLocaleString('zh-CN', {maximumFractionDigits: 2}) +
                                       ' 积分';
                             // 成长中心数据按 userId 对上：只有国内个人站才有，
                             // 国际站/企业站查不到就自然不显示这一行
@@ -1974,7 +2031,7 @@
                             <div class="credential-info">
                                 <h4>${a.email || a.userId} ${checkinTag}${expiryBadgeHtml(a.soonestExpiry)}</h4>
                                 <p>${numbers}${staleTag}</p>
-                                ${quotaBarHtml(a.used, a.capacity)}
+                                ${quotaBarHtml(a.allTime?.used, a.allTime?.capacity)}
                                 ${growthHtml}
                                 ${errorLine}
                             </div>
@@ -2049,8 +2106,8 @@
             /**
              * 猫猫旅行一行：状态 + 今日名额 + 「执行一次」
              *
-             * 按钮挂在这一行而不是账号条目右侧：「执行一次」动的就是猫猫旅行
-             * （领礼物 / 派出门），外加连登档位兑换和抽奖。
+             * 「执行一次」只动猫猫旅行本身：到站就领礼物（弹窗说明带回了什么），
+             * 在家且名额未用完就派出去。连登兑换和抽奖不再从这里触发。
              */
             function travelLine(a) {
                 const t = a.travel || {};
@@ -2074,6 +2131,53 @@
                     '</div>';
             }
 
+            /**
+             * 礼物弹窗：领到礼物时说明猫猫带回了什么
+             *
+             * 没领到礼物时不弹——那种情况每次点按钮都要关一次窗，太重。
+             * letter 是上游带的礼物描述，可能为空，为空就只显示积分。
+             */
+            function showTravelGift(claim, depart, buddyName) {
+                const modal = document.getElementById('travelGiftModal');
+                const name = buddyName || '猫猫';
+                document.getElementById('travelGiftTitle').textContent = name + ' 带回了礼物';
+                document.getElementById('travelGiftWhere').textContent = claim.locationName
+                    ? '从「' + claim.locationName + '」回来'
+                    : '旅行归来';
+                document.getElementById('travelGiftCredit').textContent =
+                    '+' + Number(claim.credit || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+
+                const letterEl = document.getElementById('travelGiftLetter');
+                // letter 可能是字符串，也可能是 {title, content} 之类的对象
+                let letterText = '';
+                if (typeof claim.letter === 'string') letterText = claim.letter;
+                else if (claim.letter && typeof claim.letter === 'object') {
+                    letterText = claim.letter.content || claim.letter.text || claim.letter.title || '';
+                }
+                if (letterText) {
+                    letterEl.textContent = letterText;
+                    letterEl.style.display = 'block';
+                } else {
+                    letterEl.style.display = 'none';
+                }
+
+                // 派出结果放在弹窗底部，省得用户再去看那一行的状态
+                const departEl = document.getElementById('travelGiftDepart');
+                if (depart && depart.action === 'departed') {
+                    departEl.textContent = depart.message || '已再次出发旅行';
+                } else if (depart && depart.message) {
+                    departEl.textContent = depart.message;
+                } else {
+                    departEl.textContent = '';
+                }
+
+                modal.style.display = 'flex';
+            }
+
+            function closeTravelGift() {
+                document.getElementById('travelGiftModal').style.display = 'none';
+            }
+
             async function runGrowthOne(userId) {
                 try {
                     const response = await fetch('/codebuddyFE/growth/run', {
@@ -2083,12 +2187,17 @@
                     });
                     const data = await response.json();
                     if (response.ok) {
-                        const parts = [];
-                        if (data.adopt && data.adopt.action !== 'skip') parts.push('领养');
-                        if (data.claim && data.claim.action === 'claimed') parts.push('领奖');
-                        if (data.depart && data.depart.action === 'departed') parts.push('派猫');
-                        if (data.streak && data.streak.message) parts.push(data.streak.message);
-                        showToast(parts.length ? '已完成: ' + parts.join('，') : '本日已无待办动作');
+                        const growth = growthCache.find((g) => g && g.userId === userId);
+                        const buddyName = data.buddyName || (growth && growth.buddyName) || null;
+                        if (data.claim && data.claim.action === 'claimed') {
+                            showTravelGift(data.claim, data.depart, buddyName);
+                        } else {
+                            const parts = [];
+                            if (data.adopt && data.adopt.action !== 'skip') parts.push('领养');
+                            if (data.depart && data.depart.action === 'departed') parts.push(data.depart.message || '派猫');
+                            else if (data.depart && data.depart.message) parts.push(data.depart.message);
+                            showToast(parts.length ? '已完成: ' + parts.join('，') : '本日已无待办动作');
+                        }
                         await refreshGrowth();
                         refreshBilling();
                     } else {
